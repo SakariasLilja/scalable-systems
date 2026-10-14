@@ -1,4 +1,4 @@
-namespace InitalAttempt
+namespace InitialAttempt
 {
     public class WeatherForecast
     {
