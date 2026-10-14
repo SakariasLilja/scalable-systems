@@ -1,1 +1,46 @@
 *.env
+*.csv
+
+# =========================
+# .NET Build and Publish
+# =========================
+bin/
+obj/
+TestResults/
+*.publishproj
+
+# =========================
+# Visual Studio
+# =========================
+.vs/
+*.user
+*.userosscache
+*.sln.docstates
+*.suo
+
+# =========================
+# Visual Studio Code
+# =========================
+**/.vscode/*
+!**/.vscode/settings.json
+!**/.vscode/tasks.json
+!**/.vscode/launch.json
+!**/.vscode/extensions.json
+*.code-workspace
+.history/
+
+# =========================
+# Configuration & Secrets
+# =========================
+# Ignore development appsettings to prevent leaking local DB connections or secrets
+appsettings.Development.json
+appsettings.*.json
+!appsettings.json
+*.env
+usersecrets.json
+
+# =========================
+# OS Generated Files
+# =========================
+.DS_Store
+Thumbs.db
