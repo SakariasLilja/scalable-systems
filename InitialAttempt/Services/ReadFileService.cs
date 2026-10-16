@@ -8,7 +8,7 @@ public interface IReadFileService
 }
 
 public class ReadFileService(
-    ILogger logger,
+    ILogger<ReadFileService> logger,
     IConfiguration configuration) : IReadFileService
 {
     private string CSV_PREFIX => configuration.GetValue<string>("CSV_PREFIX")
