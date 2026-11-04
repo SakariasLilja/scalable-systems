@@ -8,6 +8,16 @@ services:
       - "5432:5432"
     volumes:
       - timescaledb_data:/var/lib/postgresql/data
+  
+  dotnet-app:
+    build: ./InitialAttempt
+    container_name: trading_dotnet_app
+    env_file:
+      - .env
+    ports:
+      - "5032:5032"
+    depends_on:
+      - timescaledb
 
 volumes:
   timescaledb_data:
