@@ -1,5 +1,7 @@
 *.env
 *.csv
+*.csv:Zone.Identifier
+*.pdf
 
 # =========================
 # .NET Build and Publish
