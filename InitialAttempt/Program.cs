@@ -1,5 +1,6 @@
 using DotNetEnv;
 using InitialAttempt.Services;
+using InitialAttempt.Utils;
 
 Env.Load();
 
@@ -10,7 +11,13 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Logging.AddConsole();
 builder.Logging.AddDebug();
 
-builder.Services.AddScoped<IReadFileService, ReadFileService>();
+builder.Services.AddScoped<IReadCsvService, ReadCsvService>();
+builder.Services.AddSingleton<IConstants, Constants>(
+    provider => new Constants(
+        provider.GetRequiredService<ILogger<Constants>>(),
+        provider.GetRequiredService<IConfiguration>()
+    )
+);
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
