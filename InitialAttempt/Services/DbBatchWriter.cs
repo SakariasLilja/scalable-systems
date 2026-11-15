@@ -26,6 +26,8 @@ public class DbBatchWriter(
         {
             try
             {
+                bool flushFailed = false;
+
                 while (channel.TryRead(out var record))
                 {
                     if (buffer.Count >= maxBufferSize)
@@ -37,9 +39,20 @@ public class DbBatchWriter(
                     buffer.Add(record);
                     if (buffer.Count >= maxBatchSize)
                     {
-                        await FlushBatch(buffer, connectionString, stoppingToken);
+                        var ok = await FlushBatch(buffer, connectionString, stoppingToken);
                         lastFlush = DateTime.UtcNow;
+                        if (!ok)
+                        {
+                            flushFailed = true;
+                            break;
+                        }
                     }
+                }
+
+                if (flushFailed)
+                {
+                    await Task.Delay(2000, stoppingToken);
+                    continue;
                 }
 
                 var elapsed = DateTime.UtcNow - lastFlush;
@@ -60,9 +73,9 @@ public class DbBatchWriter(
 
                 try
                 {
-                    if (await channel.WaitToReadAsync(linkedCts.Token))
+                    if (!await channel.WaitToReadAsync(linkedCts.Token))
                     {
-                        continue;
+                        break;
                     }
                 }
                 catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !stoppingToken.IsCancellationRequested)
@@ -85,15 +98,20 @@ public class DbBatchWriter(
             }
         }
 
-        if (buffer.Count > 0)
+        while (buffer.Count > 0)
         {
             try
             {
-                await FlushBatch(buffer, connectionString, CancellationToken.None);
+                var ok = await FlushBatch(buffer, connectionString, CancellationToken.None);
+                if (!ok)
+                {
+                    break;
+                }
             }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Error flushing remaining records during shutdown");
+                break;
             }
         }
     }
@@ -109,9 +127,9 @@ public class DbBatchWriter(
         return $"Host={host};Port={port};Database={db};Username={user};Password={password};Timeout=5;Command Timeout=10";
     }
 
-    private async Task FlushBatch(List<FinalizedWindowRecord> batch, string connectionString, CancellationToken ct)
+    private async Task<bool> FlushBatch(List<FinalizedWindowRecord> batch, string connectionString, CancellationToken ct)
     {
-        if (batch.Count == 0) return;
+        if (batch.Count == 0) return true;
 
         int recordsToFlush = Math.Min(batch.Count, maxBatchSize);
 
@@ -146,10 +164,12 @@ public class DbBatchWriter(
             await cmd.ExecuteNonQueryAsync(ct);
             logger.LogDebug("Flushed batch of {Count} window records to TimescaleDB", recordsToFlush);
             batch.RemoveRange(0, recordsToFlush);
+            return true;
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Failed to flush batch of {Count} records to database. Will retry next cycle.", recordsToFlush);
+            return false;
         }
     }
 }

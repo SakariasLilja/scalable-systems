@@ -37,7 +37,15 @@ public class WindowStreamConsumer(
                     if (finalized != null)
                     {
                         await finalizedChannel.Writer.WriteAsync(finalized, stoppingToken);
-                        OnWindowFinalized?.Invoke(finalized);
+
+                        try
+                        {
+                            OnWindowFinalized?.Invoke(finalized);
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.LogError(ex, "Error executing window finalized event callback");
+                        }
 
                         if (finalized.BuySignal || finalized.SellSignal)
                         {
