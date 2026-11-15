@@ -1,12 +1,26 @@
+using CsvHelper;
+
 namespace InitialAttempt.Models;
 
-// Keeping SecType as an enum since the dataset defines it strictly as (E)quity or (I)ndex
 public enum SecurityType : byte { E, I }
 
-public readonly record struct MinimalTradingEntry(
-    string Id,
-    SecurityType SecType,
-    decimal? Last,
-    TimeOnly? TradingTime,
-    DateOnly? TradingDate
-);
+[CsvRecord]
+public partial class MinimalTradingEntry
+{
+    [CsvColumn("ID")]
+    public string Id { get; set; } = string.Empty;
+
+    [CsvColumn("SecType")]
+    public SecurityType SecType { get; set; }
+
+    [CsvColumn("Last")]
+    public decimal? Last { get; set; }
+
+    [CsvColumn("Trading time")]
+    [CsvFormat("HH:mm:ss.fff")]
+    public TimeOnly? TradingTime { get; set; }
+
+    [CsvColumn("Trading date")]
+    [CsvFormat("dd-MM-yyyy")]
+    public DateOnly? TradingDate { get; set; }
+}
