@@ -8,6 +8,8 @@ implementaion_spec.md
 specs/
 .worktrees/
 worktrees/
+node_modules/
+dist/
 
 # =========================
 # .NET Build and Publish

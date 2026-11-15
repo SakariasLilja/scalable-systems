@@ -1,0 +1,123 @@
+<script>
+  import { onMount } from 'svelte';
+  import {
+    start_simulation,
+    pause_simulation,
+    resume_simulation,
+    set_simulation_speed,
+    get_simulation_status
+  } from '../lib/sse_service.js';
+
+  let sim_status = {
+    state: 0,
+    speedFactor: 1.0,
+    processedCount: 0
+  };
+  let poll_timer = null;
+
+  async function refresh_status() {
+    const data = await get_simulation_status();
+    if (data) {
+      sim_status = data;
+    }
+  }
+
+  async function handle_start() {
+    await start_simulation(null, sim_status.speedFactor || 1.0);
+    await refresh_status();
+  }
+
+  async function handle_pause() {
+    await pause_simulation();
+    await refresh_status();
+  }
+
+  async function handle_resume() {
+    await resume_simulation();
+    await refresh_status();
+  }
+
+  async function handle_speed(factor) {
+    await set_simulation_speed(factor);
+    sim_status.speedFactor = factor;
+    await refresh_status();
+  }
+
+  onMount(() => {
+    refresh_status();
+    poll_timer = setInterval(refresh_status, 2000);
+    return () => {
+      if (poll_timer) clearInterval(poll_timer);
+    };
+  });
+</script>
+
+<div class="controls-card">
+  <div class="controls-info">
+    <span class="status-indicator">
+      Status: <strong>{sim_status.state === 1 ? 'Running' : sim_status.state === 2 ? 'Paused' : 'Stopped'}</strong>
+    </span>
+    <span>Processed: <strong>{sim_status.processedCount || 0}</strong> ticks</span>
+    <span>Speed: <strong>{sim_status.speedFactor === 0 ? 'Max (No delay)' : sim_status.speedFactor + 'x'}</strong></span>
+  </div>
+
+  <div class="button-group">
+    <button class="btn btn-primary" on:click={handle_start}>Start</button>
+    <button class="btn btn-warning" on:click={handle_pause}>Pause</button>
+    <button class="btn btn-success" on:click={handle_resume}>Resume</button>
+    <span class="divider">|</span>
+    <button class="btn btn-secondary" on:click={() => handle_speed(1.0)}>1x</button>
+    <button class="btn btn-secondary" on:click={() => handle_speed(5.0)}>5x</button>
+    <button class="btn btn-secondary" on:click={() => handle_speed(10.0)}>10x</button>
+    <button class="btn btn-secondary" on:click={() => handle_speed(0.0)}>Max</button>
+  </div>
+</div>
+
+<style>
+  .controls-card {
+    background-color: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+  }
+  .controls-info {
+    display: flex;
+    gap: 1.5rem;
+    font-size: 0.9rem;
+    color: #94a3b8;
+  }
+  .controls-info strong {
+    color: #f8fafc;
+  }
+  .button-group {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+  }
+  .divider {
+    color: #475569;
+    margin: 0 0.25rem;
+  }
+  .btn {
+    padding: 0.4rem 0.8rem;
+    border-radius: 4px;
+    border: none;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.2s;
+  }
+  .btn:hover {
+    opacity: 0.9;
+  }
+  .btn-primary { background-color: #3b82f6; color: white; }
+  .btn-warning { background-color: #f59e0b; color: white; }
+  .btn-success { background-color: #10b981; color: white; }
+  .btn-secondary { background-color: #334155; color: #f8fafc; }
+</style>
