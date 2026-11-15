@@ -12,4 +12,5 @@ public interface ISseService
     IEnumerable<string> GetTrackedSymbols();
     Task BroadcastEvent(string eventType, object data);
     Task BroadcastAdvisory(FinalizedWindowRecord record);
+    Task BroadcastWindowUpdate(FinalizedWindowRecord record);
 }

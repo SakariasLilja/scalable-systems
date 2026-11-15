@@ -96,7 +96,8 @@
   function append_live_point(tick) {
     if (!chart_instance) return;
 
-    const time_label = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const tick_date = tick.time ? new Date(tick.time) : new Date();
+    const time_label = tick_date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     chart_instance.data.labels.push(time_label);
 
     chart_instance.data.datasets[0].data.push(tick.ema38 || tick.closePrice);
@@ -127,7 +128,9 @@
   });
 </script>
 
-<div class="modal-backdrop" role="presentation" on:click|self={handle_close} on:keydown={(e) => e.key === 'Escape' && handle_close()}>
+<svelte:window on:keydown={(e) => e.key === 'Escape' && handle_close()} />
+
+<div class="modal-backdrop" role="presentation" on:click|self={handle_close}>
   <div class="modal-content">
     <div class="modal-header">
       <h2>Real-Time Technical Indicators: {active_symbol}</h2>

@@ -44,7 +44,8 @@ public class SseService(ILogger<SseService> logger) : ISseService
         }
         finally
         {
-            connections.TryRemove(clientId, out _);
+            connections.TryRemove(new KeyValuePair<string, ClientConnection>(clientId, connection));
+            subscriptions.TryRemove(clientId, out _);
             logger.LogInformation("SSE Client {ClientId} disconnected. Active connections: {Count}", clientId, connections.Count);
         }
     }
@@ -92,10 +93,32 @@ public class SseService(ILogger<SseService> logger) : ISseService
 
     public async Task BroadcastAdvisory(FinalizedWindowRecord record)
     {
-        var alertType = record.BuySignal ? "BUY" : record.SellSignal ? "SELL" : "NONE";
-        if (alertType == "NONE") return;
+        await BroadcastWindowUpdate(record);
+    }
 
-        var payload = new
+    public async Task BroadcastWindowUpdate(FinalizedWindowRecord record)
+    {
+        var alertType = record.BuySignal ? "BUY" : record.SellSignal ? "SELL" : "NONE";
+
+        var activePayload = new
+        {
+            symbol = record.SymbolId,
+            closePrice = record.LastPrice,
+            ema38 = record.Ema38,
+            ema100 = record.Ema100,
+            time = record.WindowEnd,
+            buySignal = record.BuySignal,
+            sellSignal = record.SellSignal
+        };
+
+        var trackedPayload = new
+        {
+            symbol = record.SymbolId,
+            price = record.LastPrice,
+            time = record.WindowEnd
+        };
+
+        var alertPayload = alertType != "NONE" ? new
         {
             symbol = record.SymbolId,
             type = alertType,
@@ -103,16 +126,34 @@ public class SseService(ILogger<SseService> logger) : ISseService
             ema38 = record.Ema38,
             ema100 = record.Ema100,
             time = record.WindowEnd
-        };
+        } : null;
+
+        var tasks = new List<Task>();
 
         foreach (var (clientId, conn) in connections)
         {
             if (subscriptions.TryGetValue(clientId, out var subs) &&
-                subs.TryGetValue(record.SymbolId, out var sub) &&
-                sub is "tracked" or "active")
+                subs.TryGetValue(record.SymbolId, out var subState))
             {
-                await SendSseEvent(conn, "advisory_alert", payload);
+                if (subState == "active")
+                {
+                    tasks.Add(SendSseEvent(conn, "active_update", activePayload));
+                }
+                else if (subState == "tracked")
+                {
+                    tasks.Add(SendSseEvent(conn, "tracked_update", trackedPayload));
+                }
+
+                if (alertPayload != null && subState is "tracked" or "active")
+                {
+                    tasks.Add(SendSseEvent(conn, "advisory_alert", alertPayload));
+                }
             }
+        }
+
+        if (tasks.Count > 0)
+        {
+            await Task.WhenAll(tasks);
         }
     }
 
@@ -120,21 +161,24 @@ public class SseService(ILogger<SseService> logger) : ISseService
     {
         if (connection.CancellationToken.IsCancellationRequested) return;
 
-        await connection.Lock.WaitAsync(connection.CancellationToken);
         try
         {
-            var json = JsonSerializer.Serialize(data);
-            var message = $"event: {eventType}\ndata: {json}\n\n";
-            await connection.Response.WriteAsync(message, connection.CancellationToken);
-            await connection.Response.Body.FlushAsync(connection.CancellationToken);
+            await connection.Lock.WaitAsync(connection.CancellationToken);
+            try
+            {
+                var json = JsonSerializer.Serialize(data);
+                var message = $"event: {eventType}\ndata: {json}\n\n";
+                await connection.Response.WriteAsync(message, connection.CancellationToken);
+                await connection.Response.Body.FlushAsync(connection.CancellationToken);
+            }
+            finally
+            {
+                connection.Lock.Release();
+            }
         }
         catch
         {
-            connections.TryRemove(connection.ClientId, out _);
-        }
-        finally
-        {
-            connection.Lock.Release();
+            connections.TryRemove(new KeyValuePair<string, ClientConnection>(connection.ClientId, connection));
         }
     }
 }

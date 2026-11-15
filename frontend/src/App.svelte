@@ -40,6 +40,26 @@
           symbol_data = symbol_data;
         }
       }, 4000);
+    } else if (event_type === 'active_update') {
+      const { symbol, closePrice, ema38, ema100 } = payload;
+      symbol_data[symbol] = {
+        ...(symbol_data[symbol] || {}),
+        price: closePrice,
+        ema38: ema38,
+        ema100: ema100
+      };
+      symbol_data = symbol_data;
+
+      if (symbol === active_modal_symbol) {
+        latest_active_tick = payload;
+      }
+    } else if (event_type === 'tracked_update') {
+      const { symbol, price } = payload;
+      symbol_data[symbol] = {
+        ...(symbol_data[symbol] || {}),
+        price: price
+      };
+      symbol_data = symbol_data;
     }
   }
 

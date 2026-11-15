@@ -24,6 +24,16 @@ export function connect_sse(client_id, on_event) {
     on_event('advisory_alert', data);
   });
 
+  event_source.addEventListener('active_update', (e) => {
+    const data = JSON.parse(e.data);
+    on_event('active_update', data);
+  });
+
+  event_source.addEventListener('tracked_update', (e) => {
+    const data = JSON.parse(e.data);
+    on_event('tracked_update', data);
+  });
+
   event_source.onerror = (err) => {
     on_event('error', err);
   };
