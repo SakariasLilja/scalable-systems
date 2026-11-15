@@ -21,10 +21,10 @@ public class SimulatorController(
         var filePath = request?.FilePath;
         if (string.IsNullOrWhiteSpace(filePath))
         {
-            filePath = Path.Combine(constants.CSV_DIRECTORY, $"{constants.CSV_PREFIX}13-11-21{constants.CSV_SUFFIX}");
+            filePath = Path.Combine(constants.CSV_DIRECTORY, $"{constants.CSV_PREFIX}{Constants.DefaultTradingDate}{constants.CSV_SUFFIX}");
         }
 
-        var speed = request?.SpeedFactor ?? 1.0;
+        var speed = request?.SpeedFactor ?? Constants.DefaultSimulationSpeed;
         logger.LogInformation("Simulation starting with path {FilePath} and speed {Speed}", filePath, speed);
         await simulationEngine.StartSimulation(filePath, speed);
         return Accepted(simulationEngine.GetStatus());
@@ -47,6 +47,11 @@ public class SimulatorController(
     [HttpPost("speed")]
     public IActionResult SetSpeed([FromBody] SetSpeedRequest request)
     {
+        if (request.SpeedFactor <= 0)
+        {
+            return BadRequest("Speed factor must be greater than zero.");
+        }
+
         simulationEngine.SetSpeedFactor(request.SpeedFactor);
         return Ok();
     }

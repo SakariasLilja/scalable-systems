@@ -24,6 +24,7 @@ public class Constants(
     public const double EmaLongAlpha = 2.0 / (1.0 + 100.0);
 
     public const double DefaultSimulationSpeed = 1.0;
+    public const string DefaultTradingDate = "13-11-21";
     public const int TrackedPushIntervalMs = 10000;
     public const int ActivePushIntervalMs = 2000;
 

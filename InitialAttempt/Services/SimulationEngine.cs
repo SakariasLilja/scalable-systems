@@ -8,7 +8,7 @@ namespace InitialAttempt.Services;
 public class SimulationEngine : ISimulationEngine
 {
     private readonly IReadCsvService readCsvService;
-    private readonly Channel<MinimalTradingEntry> channel;
+    private Channel<MinimalTradingEntry> channel;
     private readonly object stateLock = new();
     private readonly ManualResetEventSlim pauseEvent = new(true);
 
@@ -22,12 +22,15 @@ public class SimulationEngine : ISimulationEngine
     public SimulationEngine(IReadCsvService readCsvService)
     {
         this.readCsvService = readCsvService;
-        this.channel = Channel.CreateBounded<MinimalTradingEntry>(new BoundedChannelOptions(Constants.SimulationChannelCapacity)
+        this.channel = CreateChannel();
+    }
+
+    private static Channel<MinimalTradingEntry> CreateChannel() =>
+        Channel.CreateBounded<MinimalTradingEntry>(new BoundedChannelOptions(Constants.SimulationChannelCapacity)
         {
             FullMode = BoundedChannelFullMode.Wait,
             SingleWriter = true
         });
-    }
 
     public static long CalculateDelay(long deltaMs, double speedFactor)
     {
@@ -36,7 +39,13 @@ public class SimulationEngine : ISimulationEngine
             return 0;
         }
 
-        return (long)(deltaMs / speedFactor);
+        double scaled = deltaMs / speedFactor;
+        if (scaled > int.MaxValue)
+        {
+            return int.MaxValue;
+        }
+
+        return (long)scaled;
     }
 
     public Task StartSimulation(string filePath, double speedFactor, CancellationToken ct = default)
@@ -48,6 +57,11 @@ public class SimulationEngine : ISimulationEngine
                 return Task.CompletedTask;
             }
 
+            if (channel.Reader.Completion.IsCompleted)
+            {
+                channel = CreateChannel();
+            }
+
             this.speedFactor = speedFactor;
             this.processedCount = 0;
             this.currentSimulationTime = null;
@@ -57,7 +71,8 @@ public class SimulationEngine : ISimulationEngine
             this.pauseEvent.Set();
         }
 
-        return Task.Run(() => RunPlaybackLoop(filePath, playbackCts.Token), CancellationToken.None);
+        _ = Task.Run(() => RunPlaybackLoop(filePath, playbackCts.Token), CancellationToken.None);
+        return Task.CompletedTask;
     }
 
     public void PauseSimulation()
@@ -150,7 +165,8 @@ public class SimulationEngine : ISimulationEngine
                     var delayMs = CalculateDelay(deltaMs, currentSpeed);
                     if (delayMs > 0)
                     {
-                        await Task.Delay((int)delayMs, ct);
+                        var clamped = (int)Math.Min(delayMs, int.MaxValue);
+                        await Task.Delay(clamped, ct);
                     }
                 }
 
@@ -169,6 +185,7 @@ public class SimulationEngine : ISimulationEngine
         }
         finally
         {
+            channel.Writer.TryComplete();
             lock (stateLock)
             {
                 state = SimulationState.Stopped;
