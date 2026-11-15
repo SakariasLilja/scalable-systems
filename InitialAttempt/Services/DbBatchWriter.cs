@@ -1,5 +1,6 @@
 using System.Text;
 using InitialAttempt.Models;
+using InitialAttempt.Utils;
 using Microsoft.Extensions.Hosting;
 using Npgsql;
 
@@ -11,9 +12,9 @@ public class DbBatchWriter(
     ILogger<DbBatchWriter> logger
 ) : BackgroundService
 {
-    private readonly int maxBatchSize = 1000;
-    private readonly int maxBufferSize = 5000;
-    private readonly TimeSpan flushInterval = TimeSpan.FromSeconds(5);
+    private readonly int maxBatchSize = Constants.DbBatchMaxCapacity;
+    private readonly int maxBufferSize = Constants.DbBatchMaxBufferSize;
+    private readonly TimeSpan flushInterval = TimeSpan.FromMilliseconds(Constants.DbBatchFlushIntervalMs);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {

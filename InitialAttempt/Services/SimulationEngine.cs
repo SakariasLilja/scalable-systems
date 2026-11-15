@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Threading.Channels;
 using InitialAttempt.Models;
+using InitialAttempt.Utils;
 
 namespace InitialAttempt.Services;
 
@@ -12,7 +13,7 @@ public class SimulationEngine : ISimulationEngine
     private readonly ManualResetEventSlim pauseEvent = new(true);
 
     private SimulationState state = SimulationState.Stopped;
-    private double speedFactor = 1.0;
+    private double speedFactor = Constants.DefaultSimulationSpeed;
     private long processedCount = 0;
     private DateTime? currentSimulationTime = null;
     private Stopwatch wallStopwatch = new();
@@ -21,7 +22,7 @@ public class SimulationEngine : ISimulationEngine
     public SimulationEngine(IReadCsvService readCsvService)
     {
         this.readCsvService = readCsvService;
-        this.channel = Channel.CreateBounded<MinimalTradingEntry>(new BoundedChannelOptions(100000)
+        this.channel = Channel.CreateBounded<MinimalTradingEntry>(new BoundedChannelOptions(Constants.SimulationChannelCapacity)
         {
             FullMode = BoundedChannelFullMode.Wait,
             SingleWriter = true

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using InitialAttempt.Models;
+using InitialAttempt.Utils;
 using Microsoft.AspNetCore.Http;
 
 namespace InitialAttempt.Services;
@@ -135,16 +136,16 @@ public class SseService(ILogger<SseService> logger) : ISseService
             if (subscriptions.TryGetValue(clientId, out var subs) &&
                 subs.TryGetValue(record.SymbolId, out var subState))
             {
-                if (subState == "active")
+                if (subState == Constants.SubscriptionActive)
                 {
                     tasks.Add(SendSseEvent(conn, "active_update", activePayload));
                 }
-                else if (subState == "tracked")
+                else if (subState == Constants.SubscriptionTracked)
                 {
                     tasks.Add(SendSseEvent(conn, "tracked_update", trackedPayload));
                 }
 
-                if (alertPayload != null && subState is "tracked" or "active")
+                if (alertPayload != null && (subState == Constants.SubscriptionTracked || subState == Constants.SubscriptionActive))
                 {
                     tasks.Add(SendSseEvent(conn, "advisory_alert", alertPayload));
                 }

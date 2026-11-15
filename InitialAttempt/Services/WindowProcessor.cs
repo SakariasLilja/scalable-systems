@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using InitialAttempt.Models;
+using InitialAttempt.Utils;
 
 namespace InitialAttempt.Services;
 
@@ -32,10 +33,10 @@ public class WindowProcessor : IWindowProcessor
 
         var date = tick.TradingDate.Value;
         var time = tick.TradingTime.Value;
-        int minuteBucket = (time.Minute / 5) * 5;
+        int minuteBucket = (time.Minute / Constants.WindowDurationMinutes) * Constants.WindowDurationMinutes;
         var cestTime = new DateTimeOffset(date.Year, date.Month, date.Day, time.Hour, minuteBucket, 0, CestOffset);
         var tickWindowStart = cestTime.UtcDateTime;
-        var tickWindowEnd = tickWindowStart.AddMinutes(5);
+        var tickWindowEnd = tickWindowStart.AddMinutes(Constants.WindowDurationMinutes);
         double currentPrice = (double)tick.Last.Value;
 
         var state = states.GetOrAdd(tick.Id, _ => new SymbolState
@@ -58,8 +59,8 @@ public class WindowProcessor : IWindowProcessor
                 double prevEma38 = state.Ema38;
                 double prevEma100 = state.Ema100;
 
-                double newEma38 = EmaCalculator.CalculateEma(closePrice, prevEma38, 38);
-                double newEma100 = EmaCalculator.CalculateEma(closePrice, prevEma100, 100);
+                double newEma38 = EmaCalculator.CalculateEma(closePrice, prevEma38, Constants.EmaShortPeriod);
+                double newEma100 = EmaCalculator.CalculateEma(closePrice, prevEma100, Constants.EmaLongPeriod);
 
                 var (buySignal, sellSignal) = EmaCalculator.EvaluateBreakout(newEma38, newEma100, prevEma38, prevEma100);
 

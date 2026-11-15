@@ -32,6 +32,10 @@ public class Constants(
     public const int DbBatchMaxBufferSize = 5000;
     public const int SimulationChannelCapacity = 100000;
 
+    public const string SubscriptionHidden = "hidden";
+    public const string SubscriptionTracked = "tracked";
+    public const string SubscriptionActive = "active";
+
     public string CSV_PREFIX => configuration.GetValue<string>("CSV_PREFIX")
         ?? LogEnvErrorWithFallback("CSV_PREFIX", "debs2022-gc-trading-day-");
     

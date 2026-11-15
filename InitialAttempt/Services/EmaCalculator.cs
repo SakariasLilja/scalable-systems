@@ -1,7 +1,15 @@
+using InitialAttempt.Utils;
+
 namespace InitialAttempt.Services;
 
 public static class EmaCalculator
 {
+    public static double CalculateShortEma(double closePrice, double previousEma) =>
+        (closePrice * Constants.EmaShortAlpha) + (previousEma * (1.0 - Constants.EmaShortAlpha));
+
+    public static double CalculateLongEma(double closePrice, double previousEma) =>
+        (closePrice * Constants.EmaLongAlpha) + (previousEma * (1.0 - Constants.EmaLongAlpha));
+
     public static double CalculateEma(double closePrice, double previousEma, int period)
     {
         double alpha = 2.0 / (1.0 + period);
