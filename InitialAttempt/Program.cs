@@ -11,6 +11,12 @@ builder.Logging.AddDebug();
 
 builder.Services.AddSingleton<IReadCsvService, ReadCsvService>();
 builder.Services.AddSingleton<ISimulationEngine, SimulationEngine>();
+builder.Services.AddSingleton<IWindowProcessor, WindowProcessor>();
+builder.Services.AddSingleton<WindowStreamConsumer>();
+builder.Services.AddSingleton<IWindowStreamConsumer>(sp => sp.GetRequiredService<WindowStreamConsumer>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<WindowStreamConsumer>());
+builder.Services.AddHostedService<DbBatchWriter>();
+
 builder.Services.AddSingleton<IConstants, Constants>(
     provider => new Constants(
         provider.GetRequiredService<ILogger<Constants>>(),
