@@ -17,8 +17,25 @@
   let symbol_data = {};
   let active_modal_symbol = null;
   let latest_active_tick = null;
+  let alert_timers = {};
+
+  async function re_register_subscriptions() {
+    if (!client_id) return;
+    for (const sym of tracked_symbols) {
+      if (sym === active_modal_symbol) {
+        await set_symbol_state(client_id, sym, subscription_states.active);
+      } else {
+        await set_symbol_state(client_id, sym, subscription_states.tracked);
+      }
+    }
+  }
 
   function handle_sse_event(event_type, payload) {
+    if (event_type === 'connected' || event_type === 'open') {
+      re_register_subscriptions();
+      return;
+    }
+
     if (event_type === 'advisory_alert') {
       const { symbol, type, closePrice, ema38, ema100 } = payload;
       symbol_data[symbol] = {
@@ -34,11 +51,16 @@
         latest_active_tick = payload;
       }
 
-      setTimeout(() => {
+      if (alert_timers[symbol]) {
+        clearTimeout(alert_timers[symbol]);
+      }
+
+      alert_timers[symbol] = setTimeout(() => {
         if (symbol_data[symbol] && symbol_data[symbol].recent_alert === type) {
           symbol_data[symbol].recent_alert = null;
           symbol_data = symbol_data;
         }
+        delete alert_timers[symbol];
       }, 4000);
     } else if (event_type === 'active_update') {
       const { symbol, closePrice, ema38, ema100 } = payload;

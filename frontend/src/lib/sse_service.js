@@ -34,6 +34,10 @@ export function connect_sse(client_id, on_event) {
     on_event('tracked_update', data);
   });
 
+  event_source.onopen = (e) => {
+    on_event('open', e);
+  };
+
   event_source.onerror = (err) => {
     on_event('error', err);
   };
@@ -42,16 +46,22 @@ export function connect_sse(client_id, on_event) {
 }
 
 export async function set_symbol_state(client_id, symbol, state) {
-  const response = await fetch(`${api_base_url}/api/subscription/set-state`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      clientId: client_id,
-      symbol: symbol,
-      state: state
-    })
-  });
-  return response.json();
+  try {
+    const response = await fetch(`${api_base_url}/api/subscription/set-state`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        clientId: client_id,
+        symbol: symbol,
+        state: state
+      })
+    });
+    if (!response.ok) return { success: false, status: response.status };
+    return await response.json();
+  } catch (err) {
+    console.error('Failed to set symbol state:', err);
+    return { success: false, error: err.message };
+  }
 }
 
 export async function fetch_history(symbol, limit = 50) {
