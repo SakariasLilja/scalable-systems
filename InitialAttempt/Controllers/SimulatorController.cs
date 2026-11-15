@@ -16,7 +16,7 @@ public class SimulatorController(
 ) : ControllerBase
 {
     [HttpPost("start")]
-    public async Task<IActionResult> start([FromBody] StartSimulationRequest? request)
+    public async Task<IActionResult> Start([FromBody] StartSimulationRequest? request)
     {
         var filePath = request?.FilePath;
         if (string.IsNullOrWhiteSpace(filePath))
@@ -26,34 +26,34 @@ public class SimulatorController(
 
         var speed = request?.SpeedFactor ?? 1.0;
         logger.LogInformation("Simulation starting with path {FilePath} and speed {Speed}", filePath, speed);
-        await simulationEngine.startSimulation(filePath, speed);
-        return Accepted(simulationEngine.getStatus());
+        await simulationEngine.StartSimulation(filePath, speed);
+        return Accepted(simulationEngine.GetStatus());
     }
 
     [HttpPost("pause")]
-    public IActionResult pause()
+    public IActionResult Pause()
     {
-        simulationEngine.pauseSimulation();
-        return Ok(simulationEngine.getStatus());
+        simulationEngine.PauseSimulation();
+        return Ok(simulationEngine.GetStatus());
     }
 
     [HttpPost("resume")]
-    public IActionResult resume()
+    public IActionResult Resume()
     {
-        simulationEngine.resumeSimulation();
-        return Ok(simulationEngine.getStatus());
+        simulationEngine.ResumeSimulation();
+        return Ok(simulationEngine.GetStatus());
     }
 
     [HttpPost("speed")]
-    public IActionResult setSpeed([FromBody] SetSpeedRequest request)
+    public IActionResult SetSpeed([FromBody] SetSpeedRequest request)
     {
-        simulationEngine.setSpeedFactor(request.SpeedFactor);
+        simulationEngine.SetSpeedFactor(request.SpeedFactor);
         return Ok();
     }
 
     [HttpGet("status")]
-    public IActionResult getStatus()
+    public IActionResult GetStatus()
     {
-        return Ok(simulationEngine.getStatus());
+        return Ok(simulationEngine.GetStatus());
     }
 }

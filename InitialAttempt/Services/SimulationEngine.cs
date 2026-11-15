@@ -28,7 +28,7 @@ public class SimulationEngine : ISimulationEngine
         });
     }
 
-    public static long calculateDelay(long deltaMs, double speedFactor)
+    public static long CalculateDelay(long deltaMs, double speedFactor)
     {
         if (speedFactor <= 0.0 || deltaMs <= 0)
         {
@@ -38,7 +38,7 @@ public class SimulationEngine : ISimulationEngine
         return (long)(deltaMs / speedFactor);
     }
 
-    public Task startSimulation(string filePath, double speedFactor, CancellationToken ct = default)
+    public Task StartSimulation(string filePath, double speedFactor, CancellationToken ct = default)
     {
         lock (stateLock)
         {
@@ -56,10 +56,10 @@ public class SimulationEngine : ISimulationEngine
             this.pauseEvent.Set();
         }
 
-        return Task.Run(() => runPlaybackLoop(filePath, playbackCts.Token), CancellationToken.None);
+        return Task.Run(() => RunPlaybackLoop(filePath, playbackCts.Token), CancellationToken.None);
     }
 
-    public void pauseSimulation()
+    public void PauseSimulation()
     {
         lock (stateLock)
         {
@@ -72,7 +72,7 @@ public class SimulationEngine : ISimulationEngine
         }
     }
 
-    public void resumeSimulation()
+    public void ResumeSimulation()
     {
         lock (stateLock)
         {
@@ -85,7 +85,7 @@ public class SimulationEngine : ISimulationEngine
         }
     }
 
-    public void setSpeedFactor(double speedFactor)
+    public void SetSpeedFactor(double speedFactor)
     {
         lock (stateLock)
         {
@@ -93,7 +93,7 @@ public class SimulationEngine : ISimulationEngine
         }
     }
 
-    public SimulationStatus getStatus()
+    public SimulationStatus GetStatus()
     {
         lock (stateLock)
         {
@@ -107,18 +107,18 @@ public class SimulationEngine : ISimulationEngine
         }
     }
 
-    public ChannelReader<MinimalTradingEntry> getEventChannel()
+    public ChannelReader<MinimalTradingEntry> GetEventChannel()
     {
         return channel.Reader;
     }
 
-    private async Task runPlaybackLoop(string filePath, CancellationToken ct)
+    private async Task RunPlaybackLoop(string filePath, CancellationToken ct)
     {
         DateTime? previousEventTime = null;
 
         try
         {
-            foreach (var record in readCsvService.streamTradeEvents(filePath, ct))
+            foreach (var record in readCsvService.StreamTradeEvents(filePath, ct))
             {
                 if (ct.IsCancellationRequested)
                 {
@@ -146,7 +146,7 @@ public class SimulationEngine : ISimulationEngine
                         currentSpeed = speedFactor;
                     }
 
-                    var delayMs = calculateDelay(deltaMs, currentSpeed);
+                    var delayMs = CalculateDelay(deltaMs, currentSpeed);
                     if (delayMs > 0)
                     {
                         await Task.Delay((int)delayMs, ct);

@@ -6,17 +6,17 @@ namespace InitialAttempt.Services;
 public interface IReadCsvService
 {
     IEnumerable<MinimalTradingEntry> StreamData(string filePath, CancellationToken cancellationToken);
-    IEnumerable<MinimalTradingEntry> streamTradeEvents(string filePath, CancellationToken cancellationToken);
+    IEnumerable<MinimalTradingEntry> StreamTradeEvents(string filePath, CancellationToken cancellationToken);
 }
 
 public class ReadCsvService : IReadCsvService
 {
     public IEnumerable<MinimalTradingEntry> StreamData(string filePath, CancellationToken cancellationToken)
     {
-        return streamTradeEvents(filePath, cancellationToken);
+        return StreamTradeEvents(filePath, cancellationToken);
     }
 
-    public IEnumerable<MinimalTradingEntry> streamTradeEvents(string filePath, CancellationToken cancellationToken)
+    public IEnumerable<MinimalTradingEntry> StreamTradeEvents(string filePath, CancellationToken cancellationToken)
     {
         var config = new CsvReaderOptions
         {

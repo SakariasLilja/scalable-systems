@@ -18,21 +18,21 @@ public class SimulatorControllerTests
         public bool Resumed = false;
         public bool Started = false;
 
-        public Task startSimulation(string filePath, double speedFactor, CancellationToken ct = default)
+        public Task StartSimulation(string filePath, double speedFactor, CancellationToken ct = default)
         {
             Started = true;
             LastSetSpeed = speedFactor;
             return Task.CompletedTask;
         }
 
-        public void pauseSimulation() => Paused = true;
-        public void resumeSimulation() => Resumed = true;
-        public void setSpeedFactor(double speedFactor) => LastSetSpeed = speedFactor;
+        public void PauseSimulation() => Paused = true;
+        public void ResumeSimulation() => Resumed = true;
+        public void SetSpeedFactor(double speedFactor) => LastSetSpeed = speedFactor;
 
-        public SimulationStatus getStatus() =>
+        public SimulationStatus GetStatus() =>
             new(SimulationState.Running, LastSetSpeed, 100, DateTime.UtcNow, TimeSpan.FromSeconds(2));
 
-        public ChannelReader<MinimalTradingEntry> getEventChannel() =>
+        public ChannelReader<MinimalTradingEntry> GetEventChannel() =>
             Channel.CreateUnbounded<MinimalTradingEntry>().Reader;
     }
 
@@ -44,12 +44,12 @@ public class SimulatorControllerTests
     }
 
     [Fact]
-    public void getStatus_ReturnsOkWithStatus()
+    public void GetStatus_ReturnsOkWithStatus()
     {
         var fakeEngine = new FakeSimulationEngine();
         var controller = new SimulatorController(NullLogger<SimulatorController>.Instance, fakeEngine, new FakeConstants());
 
-        var result = controller.getStatus();
+        var result = controller.GetStatus();
 
         var okResult = Assert.IsType<OkObjectResult>(result);
         var status = Assert.IsType<SimulationStatus>(okResult.Value);
@@ -57,12 +57,12 @@ public class SimulatorControllerTests
     }
 
     [Fact]
-    public void setSpeed_CallsEngineSetSpeedFactor()
+    public void SetSpeed_CallsEngineSetSpeedFactor()
     {
         var fakeEngine = new FakeSimulationEngine();
         var controller = new SimulatorController(NullLogger<SimulatorController>.Instance, fakeEngine, new FakeConstants());
 
-        var result = controller.setSpeed(new SetSpeedRequest(5.0));
+        var result = controller.SetSpeed(new SetSpeedRequest(5.0));
 
         Assert.Equal(5.0, fakeEngine.LastSetSpeed);
         Assert.IsType<OkResult>(result);

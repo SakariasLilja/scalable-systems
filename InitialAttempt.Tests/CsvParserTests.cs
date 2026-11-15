@@ -7,7 +7,7 @@ namespace InitialAttempt.Tests;
 public class CsvParserTests
 {
     [Fact]
-    public void streamTradeEvents_FiltersOutNullLastAndComments()
+    public void StreamTradeEvents_FiltersOutNullLastAndComments()
     {
         var csvContent = """
         # Comment line
@@ -21,7 +21,7 @@ public class CsvParserTests
         try
         {
             var service = new ReadCsvService();
-            var results = service.streamTradeEvents(tempFile, CancellationToken.None).ToList();
+            var results = service.StreamTradeEvents(tempFile, CancellationToken.None).ToList();
 
             Assert.Single(results);
             Assert.Equal("RDSA.NL", results[0].Id);

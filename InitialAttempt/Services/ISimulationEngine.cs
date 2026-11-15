@@ -20,10 +20,10 @@ public record SimulationStatus(
 
 public interface ISimulationEngine
 {
-    Task startSimulation(string filePath, double speedFactor, CancellationToken ct = default);
-    void pauseSimulation();
-    void resumeSimulation();
-    void setSpeedFactor(double speedFactor);
-    SimulationStatus getStatus();
-    ChannelReader<MinimalTradingEntry> getEventChannel();
+    Task StartSimulation(string filePath, double speedFactor, CancellationToken ct = default);
+    void PauseSimulation();
+    void ResumeSimulation();
+    void SetSpeedFactor(double speedFactor);
+    SimulationStatus GetStatus();
+    ChannelReader<MinimalTradingEntry> GetEventChannel();
 }

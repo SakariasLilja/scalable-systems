@@ -10,9 +10,9 @@ public class SimulationEngineTests
     [InlineData(1000, 2.0, 500)]
     [InlineData(1000, 10.0, 100)]
     [InlineData(1000, 0.0, 0)]
-    public void calculateDelay_ComputesCorrectScaledDelay(long deltaMs, double speedFactor, long expectedDelayMs)
+    public void CalculateDelay_ComputesCorrectScaledDelay(long deltaMs, double speedFactor, long expectedDelayMs)
     {
-        var delay = SimulationEngine.calculateDelay(deltaMs, speedFactor);
+        var delay = SimulationEngine.CalculateDelay(deltaMs, speedFactor);
         Assert.Equal(expectedDelayMs, delay);
     }
 }
