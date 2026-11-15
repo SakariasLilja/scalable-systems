@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using InitialAttempt.Models;
 using InitialAttempt.Services;
 using InitialAttempt.Utils;
 using Microsoft.AspNetCore.Mvc;

@@ -6,12 +6,11 @@ Env.Load();
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-
 builder.Logging.AddConsole();
 builder.Logging.AddDebug();
 
-builder.Services.AddScoped<IReadCsvService, ReadCsvService>();
+builder.Services.AddSingleton<IReadCsvService, ReadCsvService>();
+builder.Services.AddSingleton<ISimulationEngine, SimulationEngine>();
 builder.Services.AddSingleton<IConstants, Constants>(
     provider => new Constants(
         provider.GetRequiredService<ILogger<Constants>>(),
@@ -24,7 +23,6 @@ builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
