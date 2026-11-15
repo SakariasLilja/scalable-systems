@@ -50,6 +50,11 @@ appsettings.*.json
 usersecrets.json
 
 # =========================
+# Documentation
+# =========================
+docs/SYSTEM_GUIDE.md
+
+# =========================
 # OS Generated Files
 # =========================
 .DS_Store
