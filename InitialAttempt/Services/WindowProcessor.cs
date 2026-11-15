@@ -59,8 +59,8 @@ public class WindowProcessor : IWindowProcessor
                 double prevEma38 = state.Ema38;
                 double prevEma100 = state.Ema100;
 
-                double newEma38 = EmaCalculator.CalculateEma(closePrice, prevEma38, Constants.EmaShortPeriod);
-                double newEma100 = EmaCalculator.CalculateEma(closePrice, prevEma100, Constants.EmaLongPeriod);
+                double newEma38 = EmaCalculator.CalculateShortEma(closePrice, prevEma38);
+                double newEma100 = EmaCalculator.CalculateLongEma(closePrice, prevEma100);
 
                 var (buySignal, sellSignal) = EmaCalculator.EvaluateBreakout(newEma38, newEma100, prevEma38, prevEma100);
 

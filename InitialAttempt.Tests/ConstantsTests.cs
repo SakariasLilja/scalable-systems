@@ -31,6 +31,16 @@ public class ConstantsTests
         Assert.Equal(5000, Constants.DbBatchFlushIntervalMs);
         Assert.Equal(1000, Constants.DbBatchMaxCapacity);
         Assert.Equal(5000, Constants.DbBatchMaxBufferSize);
+        Assert.Equal(2000, Constants.DbBatchRetryDelayMs);
         Assert.Equal(100000, Constants.SimulationChannelCapacity);
+        Assert.Equal(50000, Constants.WindowConsumerChannelCapacity);
+    }
+
+    [Fact]
+    public void SubscriptionConstants_MatchSpecification()
+    {
+        Assert.Equal("hidden", Constants.SubscriptionHidden);
+        Assert.Equal("tracked", Constants.SubscriptionTracked);
+        Assert.Equal("active", Constants.SubscriptionActive);
     }
 }

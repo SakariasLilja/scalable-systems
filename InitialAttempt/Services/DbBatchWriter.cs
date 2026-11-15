@@ -52,7 +52,7 @@ public class DbBatchWriter(
 
                 if (flushFailed)
                 {
-                    await Task.Delay(2000, stoppingToken);
+                    await Task.Delay(Constants.DbBatchRetryDelayMs, stoppingToken);
                     continue;
                 }
 

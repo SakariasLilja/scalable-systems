@@ -65,14 +65,14 @@ public class SseService(ILogger<SseService> logger) : ISseService
             return state;
         }
 
-        return "hidden";
+        return Constants.SubscriptionHidden;
     }
 
     public IEnumerable<string> GetActiveSymbols()
     {
         return subscriptions.Values
             .SelectMany(s => s)
-            .Where(s => s.Value == "active")
+            .Where(s => s.Value == Constants.SubscriptionActive)
             .Select(s => s.Key)
             .Distinct();
     }
@@ -81,7 +81,7 @@ public class SseService(ILogger<SseService> logger) : ISseService
     {
         return subscriptions.Values
             .SelectMany(s => s)
-            .Where(s => s.Value is "tracked" or "active")
+            .Where(s => s.Value == Constants.SubscriptionTracked || s.Value == Constants.SubscriptionActive)
             .Select(s => s.Key)
             .Distinct();
     }

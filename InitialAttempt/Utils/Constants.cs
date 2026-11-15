@@ -30,7 +30,9 @@ public class Constants(
     public const int DbBatchFlushIntervalMs = 5000;
     public const int DbBatchMaxCapacity = 1000;
     public const int DbBatchMaxBufferSize = 5000;
+    public const int DbBatchRetryDelayMs = 2000;
     public const int SimulationChannelCapacity = 100000;
+    public const int WindowConsumerChannelCapacity = 50000;
 
     public const string SubscriptionHidden = "hidden";
     public const string SubscriptionTracked = "tracked";
@@ -42,8 +44,9 @@ public class Constants(
     public string CSV_SUFFIX => configuration.GetValue<string>("CSV_SUFFIX")
         ?? LogEnvErrorWithFallback("CSV_SUFFIX", ".csv");
 
-    public string CSV_DIRECTORY => configuration.GetValue<string>("CSV_DIRECTORY")
-        ?? LogEnvErrorWithFallback("CSV_DIRECTORY", ".");
+    public string CSV_DIRECTORY => configuration.GetValue<string>("DATA_DIRECTORY")
+        ?? configuration.GetValue<string>("CSV_DIRECTORY")
+        ?? LogEnvErrorWithFallback("DATA_DIRECTORY", ".");
 
     private string LogEnvErrorWithFallback(string environmentVariable, string fallback)
     {

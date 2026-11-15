@@ -1,5 +1,6 @@
 using System.Threading.Channels;
 using InitialAttempt.Models;
+using InitialAttempt.Utils;
 using Microsoft.Extensions.Hosting;
 
 namespace InitialAttempt.Services;
@@ -10,7 +11,7 @@ public class WindowStreamConsumer(
     ILogger<WindowStreamConsumer> logger
 ) : BackgroundService, IWindowStreamConsumer
 {
-    private readonly Channel<FinalizedWindowRecord> finalizedChannel = Channel.CreateBounded<FinalizedWindowRecord>(new BoundedChannelOptions(50000)
+    private readonly Channel<FinalizedWindowRecord> finalizedChannel = Channel.CreateBounded<FinalizedWindowRecord>(new BoundedChannelOptions(Constants.WindowConsumerChannelCapacity)
     {
         FullMode = BoundedChannelFullMode.Wait,
         SingleWriter = true
