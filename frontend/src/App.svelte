@@ -9,7 +9,7 @@
     connect_sse,
     set_symbol_state
   } from './lib/sse_service.js';
-  import { default_tracked_symbols } from './constants.js';
+  import { default_tracked_symbols, subscription_states } from './constants.js';
 
   let client_id = '';
   let event_source = null;
@@ -67,14 +67,14 @@
     const symbol = event.detail.symbol;
     if (!tracked_symbols.includes(symbol)) {
       tracked_symbols = [...tracked_symbols, symbol];
-      await set_symbol_state(client_id, symbol, 'tracked');
+      await set_symbol_state(client_id, symbol, subscription_states.tracked);
     }
   }
 
   async function handle_untrack_symbol(event) {
     const symbol = event.detail.symbol;
     tracked_symbols = tracked_symbols.filter(s => s !== symbol);
-    await set_symbol_state(client_id, symbol, 'hidden');
+    await set_symbol_state(client_id, symbol, subscription_states.hidden);
     delete symbol_data[symbol];
     symbol_data = symbol_data;
   }
@@ -82,7 +82,7 @@
   async function handle_open_active(event) {
     const symbol = event.detail.symbol;
     active_modal_symbol = symbol;
-    await set_symbol_state(client_id, symbol, 'active');
+    await set_symbol_state(client_id, symbol, subscription_states.active);
   }
 
   async function handle_close_modal() {
@@ -91,9 +91,9 @@
       active_modal_symbol = null;
       latest_active_tick = null;
       if (tracked_symbols.includes(prev_symbol)) {
-        await set_symbol_state(client_id, prev_symbol, 'tracked');
+        await set_symbol_state(client_id, prev_symbol, subscription_states.tracked);
       } else {
-        await set_symbol_state(client_id, prev_symbol, 'hidden');
+        await set_symbol_state(client_id, prev_symbol, subscription_states.hidden);
       }
     }
   }
@@ -103,7 +103,7 @@
     event_source = connect_sse(client_id, handle_sse_event);
 
     for (const sym of tracked_symbols) {
-      await set_symbol_state(client_id, sym, 'tracked');
+      await set_symbol_state(client_id, sym, subscription_states.tracked);
     }
   });
 

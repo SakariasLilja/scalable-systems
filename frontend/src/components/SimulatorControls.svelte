@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte';
+  import { default_simulation_speed, active_chart_update_interval_ms } from '../constants.js';
   import {
     start_simulation,
     pause_simulation,
@@ -10,7 +11,7 @@
 
   let sim_status = {
     state: 0,
-    speedFactor: 1.0,
+    speedFactor: default_simulation_speed,
     processedCount: 0
   };
   let poll_timer = null;
@@ -23,7 +24,7 @@
   }
 
   async function handle_start() {
-    await start_simulation(null, sim_status.speedFactor || 1.0);
+    await start_simulation(null, sim_status.speedFactor || default_simulation_speed);
     await refresh_status();
   }
 
@@ -45,7 +46,7 @@
 
   onMount(() => {
     refresh_status();
-    poll_timer = setInterval(refresh_status, 2000);
+    poll_timer = setInterval(refresh_status, active_chart_update_interval_ms);
     return () => {
       if (poll_timer) clearInterval(poll_timer);
     };
