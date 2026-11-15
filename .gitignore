@@ -2,6 +2,12 @@
 *.csv
 *.csv:Zone.Identifier
 *.pdf
+*.vsix
+AGENTS.md
+implementaion_spec.md
+specs/
+.worktrees/
+worktrees/
 
 # =========================
 # .NET Build and Publish
