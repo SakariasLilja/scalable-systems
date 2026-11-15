@@ -36,4 +36,12 @@ public class SseServiceTests
         Assert.DoesNotContain("A0HN5C.ETR", activeSymbols);
         Assert.DoesNotContain("CBOT.FR", activeSymbols);
     }
+
+    [Fact]
+    public void SetSubscriptionState_RejectsInvalidState_DefaultsToHidden()
+    {
+        var service = new SseService(NullLogger<SseService>.Instance);
+        service.SetSubscriptionState("client-1", "RDSA.NL", "invalid_state");
+        Assert.Equal("hidden", service.GetClientSubscription("client-1", "RDSA.NL"));
+    }
 }

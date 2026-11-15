@@ -38,9 +38,9 @@ public class SimulatorControllerTests
 
     private class FakeConstants : IConstants
     {
-        public string CSV_PREFIX => "debs2022-gc-trading-day-";
-        public string CSV_SUFFIX => ".csv";
-        public string CSV_DIRECTORY => ".";
+        public string CsvPrefix => "debs2022-gc-trading-day-";
+        public string CsvSuffix => ".csv";
+        public string CsvDirectory => ".";
     }
 
     [Fact]

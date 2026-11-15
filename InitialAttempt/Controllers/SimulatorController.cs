@@ -21,7 +21,7 @@ public class SimulatorController(
         var filePath = request?.FilePath;
         if (string.IsNullOrWhiteSpace(filePath))
         {
-            filePath = Path.Combine(constants.CSV_DIRECTORY, $"{constants.CSV_PREFIX}{Constants.DefaultTradingDate}{constants.CSV_SUFFIX}");
+            filePath = Path.Combine(constants.CsvDirectory, $"{constants.CsvPrefix}{Constants.DefaultTradingDate}{constants.CsvSuffix}");
         }
 
         var speed = request?.SpeedFactor ?? Constants.DefaultSimulationSpeed;

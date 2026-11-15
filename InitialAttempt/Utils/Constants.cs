@@ -5,9 +5,13 @@ namespace InitialAttempt.Utils;
 
 public interface IConstants
 {
-    public string CSV_PREFIX { get; }
-    public string CSV_SUFFIX { get; }
-    public string CSV_DIRECTORY { get; }
+    public string CsvPrefix { get; }
+    public string CsvSuffix { get; }
+    public string CsvDirectory { get; }
+
+    public string CSV_PREFIX => CsvPrefix;
+    public string CSV_SUFFIX => CsvSuffix;
+    public string CSV_DIRECTORY => CsvDirectory;
 }
 
 public class Constants(
@@ -39,15 +43,22 @@ public class Constants(
     public const string SubscriptionTracked = "tracked";
     public const string SubscriptionActive = "active";
 
-    public string CSV_PREFIX => configuration.GetValue<string>("CSV_PREFIX")
+    public string CsvPrefix => configuration.GetValue<string>("CSV_PREFIX")
         ?? LogEnvErrorWithFallback("CSV_PREFIX", "debs2022-gc-trading-day-");
     
-    public string CSV_SUFFIX => configuration.GetValue<string>("CSV_SUFFIX")
+    public string CsvSuffix => configuration.GetValue<string>("CSV_SUFFIX")
         ?? LogEnvErrorWithFallback("CSV_SUFFIX", ".csv");
 
-    public string CSV_DIRECTORY => configuration.GetValue<string>("DATA_DIRECTORY")
+    public string CsvDirectory => TrimQuotes(configuration.GetValue<string>("DATA_DIRECTORY")
         ?? configuration.GetValue<string>("CSV_DIRECTORY")
-        ?? LogEnvErrorWithFallback("DATA_DIRECTORY", ".");
+        ?? LogEnvErrorWithFallback("DATA_DIRECTORY", "."));
+
+    public string CSV_PREFIX => CsvPrefix;
+    public string CSV_SUFFIX => CsvSuffix;
+    public string CSV_DIRECTORY => CsvDirectory;
+
+    private static string TrimQuotes(string value) =>
+        value.Trim('"', '\'');
 
     private string LogEnvErrorWithFallback(string environmentVariable, string fallback)
     {

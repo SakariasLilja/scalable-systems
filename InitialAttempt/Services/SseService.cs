@@ -53,8 +53,16 @@ public class SseService(ILogger<SseService> logger) : ISseService
 
     public void SetSubscriptionState(string clientId, string symbol, string state)
     {
+        var normalized = state?.ToLowerInvariant() ?? Constants.SubscriptionHidden;
+        if (normalized != Constants.SubscriptionHidden &&
+            normalized != Constants.SubscriptionTracked &&
+            normalized != Constants.SubscriptionActive)
+        {
+            normalized = Constants.SubscriptionHidden;
+        }
+
         var subs = subscriptions.GetOrAdd(clientId, _ => new ConcurrentDictionary<string, string>());
-        subs[symbol] = state.ToLowerInvariant();
+        subs[symbol] = normalized;
     }
 
     public string GetClientSubscription(string clientId, string symbol)
