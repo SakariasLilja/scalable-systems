@@ -12,6 +12,7 @@ public class DbBatchWriter(
 ) : BackgroundService
 {
     private readonly int maxBatchSize = 1000;
+    private readonly int maxBufferSize = 5000;
     private readonly TimeSpan flushInterval = TimeSpan.FromSeconds(5);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -19,7 +20,6 @@ public class DbBatchWriter(
         var channel = streamConsumer.GetFinalizedChannel();
         var buffer = new List<FinalizedWindowRecord>(maxBatchSize);
         var lastFlush = DateTime.UtcNow;
-
         var connectionString = BuildConnectionString();
 
         while (!stoppingToken.IsCancellationRequested)
@@ -28,6 +28,12 @@ public class DbBatchWriter(
             {
                 while (channel.TryRead(out var record))
                 {
+                    if (buffer.Count >= maxBufferSize)
+                    {
+                        buffer.RemoveRange(0, maxBatchSize);
+                        logger.LogWarning("Database buffer full; dropped oldest {Count} records", maxBatchSize);
+                    }
+
                     buffer.Add(record);
                     if (buffer.Count >= maxBatchSize)
                     {
@@ -36,15 +42,36 @@ public class DbBatchWriter(
                     }
                 }
 
-                if (buffer.Count > 0 && DateTime.UtcNow - lastFlush >= flushInterval)
+                var elapsed = DateTime.UtcNow - lastFlush;
+                if (buffer.Count > 0 && elapsed >= flushInterval)
                 {
                     await FlushBatch(buffer, connectionString, stoppingToken);
                     lastFlush = DateTime.UtcNow;
                 }
 
-                if (await channel.WaitToReadAsync(stoppingToken))
+                var remainingDelay = flushInterval - (DateTime.UtcNow - lastFlush);
+                if (remainingDelay <= TimeSpan.Zero)
                 {
-                    continue;
+                    remainingDelay = flushInterval;
+                }
+
+                using var timeoutCts = new CancellationTokenSource(remainingDelay);
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, timeoutCts.Token);
+
+                try
+                {
+                    if (await channel.WaitToReadAsync(linkedCts.Token))
+                    {
+                        continue;
+                    }
+                }
+                catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !stoppingToken.IsCancellationRequested)
+                {
+                    if (buffer.Count > 0)
+                    {
+                        await FlushBatch(buffer, connectionString, stoppingToken);
+                        lastFlush = DateTime.UtcNow;
+                    }
                 }
             }
             catch (OperationCanceledException)
@@ -86,20 +113,18 @@ public class DbBatchWriter(
     {
         if (batch.Count == 0) return;
 
+        int recordsToFlush = Math.Min(batch.Count, maxBatchSize);
+
         try
         {
             await using var connection = new NpgsqlConnection(connectionString);
             await connection.OpenAsync(ct);
 
-            await using var cmd = new NpgsqlCommand
-            {
-                Connection = connection
-            };
-
+            await using var cmd = new NpgsqlCommand { Connection = connection };
             var sql = new StringBuilder();
             sql.AppendLine("INSERT INTO trading_windows (symbol_id, window_start, window_end, ema_38, ema_100, last_price, buy_signal, sell_signal) VALUES ");
 
-            for (int i = 0; i < batch.Count; i++)
+            for (int i = 0; i < recordsToFlush; i++)
             {
                 var r = batch[i];
                 if (i > 0) sql.Append(", ");
@@ -119,14 +144,12 @@ public class DbBatchWriter(
             cmd.CommandText = sql.ToString();
 
             await cmd.ExecuteNonQueryAsync(ct);
-            logger.LogDebug("Flushed batch of {Count} window records to TimescaleDB", batch.Count);
+            logger.LogDebug("Flushed batch of {Count} window records to TimescaleDB", recordsToFlush);
+            batch.RemoveRange(0, recordsToFlush);
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Failed to flush batch of {Count} records to database. Will retry next cycle.", batch.Count);
-            return;
+            logger.LogWarning(ex, "Failed to flush batch of {Count} records to database. Will retry next cycle.", recordsToFlush);
         }
-
-        batch.Clear();
     }
 }

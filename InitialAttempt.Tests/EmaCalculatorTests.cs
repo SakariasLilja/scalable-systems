@@ -55,4 +55,20 @@ public class EmaCalculatorTests
         Assert.False(buy);
         Assert.False(sell);
     }
+
+    [Fact]
+    public void EvaluateBreakout_FirstWindowZeroes_ReturnsNoSignal()
+    {
+        var (buy, sell) = EmaCalculator.EvaluateBreakout(10.0, 5.0, 0.0, 0.0);
+        Assert.False(buy);
+        Assert.False(sell);
+    }
+
+    [Fact]
+    public void EvaluateBreakout_TouchingCurvesWithoutCrossing_ReturnsNoSignal()
+    {
+        var (buy, sell) = EmaCalculator.EvaluateBreakout(100.0, 100.0, 95.0, 100.0);
+        Assert.False(buy);
+        Assert.False(sell);
+    }
 }

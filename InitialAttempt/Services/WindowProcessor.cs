@@ -10,6 +10,8 @@ public interface IWindowProcessor
 
 public class WindowProcessor : IWindowProcessor
 {
+    private static readonly TimeSpan CestOffset = TimeSpan.FromHours(2);
+
     private class SymbolState
     {
         public DateTime WindowStart { get; set; }
@@ -17,7 +19,6 @@ public class WindowProcessor : IWindowProcessor
         public double LastPrice { get; set; }
         public double Ema38 { get; set; } = 0.0;
         public double Ema100 { get; set; } = 0.0;
-        public bool Initialized { get; set; } = false;
     }
 
     private readonly ConcurrentDictionary<string, SymbolState> states = new();
@@ -32,7 +33,8 @@ public class WindowProcessor : IWindowProcessor
         var date = tick.TradingDate.Value;
         var time = tick.TradingTime.Value;
         int minuteBucket = (time.Minute / 5) * 5;
-        var tickWindowStart = new DateTime(date.Year, date.Month, date.Day, time.Hour, minuteBucket, 0, DateTimeKind.Unspecified);
+        var cestTime = new DateTimeOffset(date.Year, date.Month, date.Day, time.Hour, minuteBucket, 0, CestOffset);
+        var tickWindowStart = cestTime.UtcDateTime;
         var tickWindowEnd = tickWindowStart.AddMinutes(5);
         double currentPrice = (double)tick.Last.Value;
 
@@ -40,18 +42,13 @@ public class WindowProcessor : IWindowProcessor
         {
             WindowStart = tickWindowStart,
             WindowEnd = tickWindowEnd,
-            LastPrice = currentPrice,
-            Initialized = true
+            LastPrice = currentPrice
         });
 
         lock (state)
         {
-            if (!state.Initialized)
+            if (tickWindowStart < state.WindowStart)
             {
-                state.WindowStart = tickWindowStart;
-                state.WindowEnd = tickWindowEnd;
-                state.LastPrice = currentPrice;
-                state.Initialized = true;
                 return null;
             }
 
