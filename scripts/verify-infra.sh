@@ -12,8 +12,10 @@ if ! command -v docker &> /dev/null; then
 fi
 
 if [ -f .env ]; then
-  # shellcheck disable=SC2046
-  export $(grep -v '^#' .env | xargs)
+  set -a
+  # shellcheck source=/dev/null
+  . .env
+  set +a
 fi
 
 PG_USER="${POSTGRES_USER:-postgres}"
@@ -54,6 +56,11 @@ ON CONFLICT (symbol_id, window_start) DO NOTHING;
 echo "=== Verifying Inserted Record ==="
 $DOCKER_CMD compose exec -T timescaledb psql -U "$PG_USER" -d "$PG_DB" -c "
 SELECT symbol_id, window_start, ema_38, ema_100, buy_signal FROM trading_windows WHERE symbol_id = 'TEST.SYM';
+"
+
+echo "=== Cleaning Up Sample Test Record ==="
+$DOCKER_CMD compose exec -T timescaledb psql -U "$PG_USER" -d "$PG_DB" -c "
+DELETE FROM trading_windows WHERE symbol_id = 'TEST.SYM';
 "
 
 echo "=== Infrastructure Verification Succeeded ==="

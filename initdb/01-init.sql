@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS trading_windows (
     PRIMARY KEY (symbol_id, window_start)
 );
 
-SELECT create_hypertable('trading_windows', 'window_start', if_not_exists => TRUE);
+SELECT create_hypertable('trading_windows', 'window_start', chunk_time_interval => INTERVAL '1 day', if_not_exists => TRUE);
 
 CREATE INDEX IF NOT EXISTS idx_trading_windows_symbol_time 
 ON trading_windows (symbol_id, window_start DESC);
