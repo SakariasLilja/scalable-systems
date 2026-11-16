@@ -9,11 +9,37 @@
     connect_sse,
     set_symbol_state
   } from './lib/sse_service.js';
-  import { default_tracked_symbols, subscription_states, alert_dismiss_timeout_ms } from './constants.js';
+  import {
+    default_tracked_symbols,
+    subscription_states,
+    alert_dismiss_timeout_ms,
+    tracked_symbols_storage_key
+  } from './constants.js';
+
+  function load_initial_tracked_symbols() {
+    try {
+      const cached = localStorage.getItem(tracked_symbols_storage_key);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {
+      // fallback on invalid cache
+    }
+    return [...default_tracked_symbols];
+  }
+
+  function save_tracked_symbols(symbols) {
+    try {
+      localStorage.setItem(tracked_symbols_storage_key, JSON.stringify(symbols));
+    } catch (e) {
+      // ignore storage errors
+    }
+  }
 
   let client_id = '';
   let event_source = null;
-  let tracked_symbols = [...default_tracked_symbols];
+  let tracked_symbols = load_initial_tracked_symbols();
   let symbol_data = {};
   let active_modal_symbol = null;
   let latest_active_tick = null;
@@ -89,6 +115,7 @@
     const symbol = event.detail.symbol;
     if (!tracked_symbols.includes(symbol)) {
       tracked_symbols = [...tracked_symbols, symbol];
+      save_tracked_symbols(tracked_symbols);
       await set_symbol_state(client_id, symbol, subscription_states.tracked);
     }
   }
@@ -96,6 +123,7 @@
   async function handle_untrack_symbol(event) {
     const symbol = event.detail.symbol;
     tracked_symbols = tracked_symbols.filter(s => s !== symbol);
+    save_tracked_symbols(tracked_symbols);
     await set_symbol_state(client_id, symbol, subscription_states.hidden);
     delete symbol_data[symbol];
     symbol_data = symbol_data;
