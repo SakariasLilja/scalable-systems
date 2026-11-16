@@ -1,12 +1,17 @@
 <script>
   import { onMount } from 'svelte';
-  import { default_simulation_speed, active_chart_update_interval_ms } from '../constants.js';
+  import {
+    default_simulation_speed,
+    active_chart_update_interval_ms,
+    default_trading_day
+  } from '../constants.js';
   import {
     start_simulation,
     pause_simulation,
     resume_simulation,
     set_simulation_speed,
-    get_simulation_status
+    get_simulation_status,
+    get_trading_days
   } from '../lib/sse_service.js';
 
   let sim_status = {
@@ -14,6 +19,8 @@
     speedFactor: default_simulation_speed,
     processedCount: 0
   };
+  let trading_days = [];
+  let selected_day = default_trading_day;
   let poll_timer = null;
 
   async function refresh_status() {
@@ -24,7 +31,7 @@
   }
 
   async function handle_start() {
-    await start_simulation(null, sim_status.speedFactor || default_simulation_speed);
+    await start_simulation(null, sim_status.speedFactor || default_simulation_speed, selected_day);
     await refresh_status();
   }
 
@@ -47,6 +54,15 @@
   onMount(() => {
     refresh_status();
     poll_timer = setInterval(refresh_status, active_chart_update_interval_ms);
+    get_trading_days().then((days) => {
+      if (days && days.length > 0) {
+        trading_days = days;
+        if (!trading_days.some((d) => d.tradingDay === selected_day)) {
+          selected_day = trading_days[0].tradingDay;
+        }
+      }
+    });
+
     return () => {
       if (poll_timer) clearInterval(poll_timer);
     };
@@ -63,6 +79,19 @@
   </div>
 
   <div class="button-group">
+    {#if trading_days.length > 0}
+      <label class="day-picker-label">
+        <span class="day-picker-text">Day:</span>
+        <select bind:value={selected_day} class="day-select">
+          {#each trading_days as d}
+            <option value={d.tradingDay}>
+              {d.tradingDay} ({Math.round(d.fileSizeBytes / (1024 * 1024))} MB)
+            </option>
+          {/each}
+        </select>
+      </label>
+      <span class="divider">|</span>
+    {/if}
     <button class="btn btn-primary" on:click={handle_start}>Start</button>
     <button class="btn btn-warning" on:click={handle_pause}>Pause</button>
     <button class="btn btn-success" on:click={handle_resume}>Resume</button>
@@ -100,6 +129,30 @@
     display: flex;
     gap: 0.4rem;
     align-items: center;
+    flex-wrap: wrap;
+  }
+  .day-picker-label {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+    color: #94a3b8;
+  }
+  .day-picker-text {
+    font-weight: 500;
+  }
+  .day-select {
+    padding: 0.35rem 0.6rem;
+    border-radius: 4px;
+    border: 1px solid #334155;
+    background-color: #0f172a;
+    color: #f8fafc;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+  .day-select:focus {
+    outline: none;
+    border-color: #3b82f6;
   }
   .divider {
     color: #475569;
