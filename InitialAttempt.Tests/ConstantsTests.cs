@@ -27,7 +27,7 @@ public class ConstantsTests
     public void IntervalAndBatchConstants_MatchSpecification()
     {
         Assert.Equal(1.0, Constants.DefaultSimulationSpeed);
-        Assert.Equal("13-11-21", Constants.DefaultTradingDate);
+        Assert.Equal("08-11-21", Constants.DefaultTradingDate);
         Assert.Equal(10000, Constants.TrackedPushIntervalMs);
         Assert.Equal(2000, Constants.ActivePushIntervalMs);
         Assert.Equal(5000, Constants.DbBatchFlushIntervalMs);

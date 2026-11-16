@@ -4,7 +4,8 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace InitialAttempt.Controllers;
 
-public record StartSimulationRequest(string? FilePath, double SpeedFactor = 1.0);
+public record TradingDayInfo(string TradingDay, string FileName, long FileSizeBytes);
+public record StartSimulationRequest(string? FilePath = null, double SpeedFactor = 1.0, string? TradingDay = null);
 public record SetSpeedRequest(double SpeedFactor);
 
 [ApiController]
@@ -15,11 +16,48 @@ public class SimulatorController(
     IConstants constants
 ) : ControllerBase
 {
+    [HttpGet("days")]
+    public IActionResult GetDays()
+    {
+        if (!Directory.Exists(constants.CsvDirectory))
+        {
+            return Ok(Array.Empty<TradingDayInfo>());
+        }
+
+        var dirInfo = new DirectoryInfo(constants.CsvDirectory);
+        var searchPattern = $"{constants.CsvPrefix}*{constants.CsvSuffix}";
+        var files = dirInfo.GetFiles(searchPattern);
+
+        var days = files.Select(f =>
+        {
+            var day = f.Name
+                .Replace(constants.CsvPrefix, "")
+                .Replace(constants.CsvSuffix, "");
+            return new TradingDayInfo(day, f.Name, f.Length);
+        })
+        .OrderBy(d => d.TradingDay)
+        .ToList();
+
+        return Ok(days);
+    }
+
     [HttpPost("start")]
     public async Task<IActionResult> Start([FromBody] StartSimulationRequest? request)
     {
-        var filePath = request?.FilePath;
-        if (string.IsNullOrWhiteSpace(filePath))
+        string filePath;
+        if (!string.IsNullOrWhiteSpace(request?.TradingDay))
+        {
+            filePath = Path.Combine(constants.CsvDirectory, $"{constants.CsvPrefix}{request.TradingDay}{constants.CsvSuffix}");
+            if (!System.IO.File.Exists(filePath))
+            {
+                return BadRequest($"Trading day file not found: {filePath}");
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(request?.FilePath))
+        {
+            filePath = request.FilePath;
+        }
+        else
         {
             filePath = Path.Combine(constants.CsvDirectory, $"{constants.CsvPrefix}{Constants.DefaultTradingDate}{constants.CsvSuffix}");
         }

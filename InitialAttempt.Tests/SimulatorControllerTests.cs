@@ -14,6 +14,7 @@ public class SimulatorControllerTests
     private class FakeSimulationEngine : ISimulationEngine
     {
         public double LastSetSpeed = 1.0;
+        public string? LastStartedPath = null;
         public bool Paused = false;
         public bool Resumed = false;
         public bool Started = false;
@@ -21,6 +22,7 @@ public class SimulatorControllerTests
         public Task StartSimulation(string filePath, double speedFactor, CancellationToken ct = default)
         {
             Started = true;
+            LastStartedPath = filePath;
             LastSetSpeed = speedFactor;
             return Task.CompletedTask;
         }
@@ -38,9 +40,87 @@ public class SimulatorControllerTests
 
     private class FakeConstants : IConstants
     {
-        public string CsvPrefix => "debs2022-gc-trading-day-";
-        public string CsvSuffix => ".csv";
-        public string CsvDirectory => ".";
+        public string CsvPrefix { get; set; } = "debs2022-gc-trading-day-";
+        public string CsvSuffix { get; set; } = ".csv";
+        public string CsvDirectory { get; set; } = ".";
+    }
+
+    [Fact]
+    public void GetDays_ReturnsDiscoveredTradingDays()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            File.WriteAllText(Path.Combine(tempDir, "debs2022-gc-trading-day-08-11-21.csv"), "Id,SecType\n");
+            File.WriteAllText(Path.Combine(tempDir, "debs2022-gc-trading-day-13-11-21.csv"), "Id,SecType\n");
+            File.WriteAllText(Path.Combine(tempDir, "other-file.txt"), "text\n");
+
+            var constants = new FakeConstants { CsvDirectory = tempDir };
+            var fakeEngine = new FakeSimulationEngine();
+            var controller = new SimulatorController(NullLogger<SimulatorController>.Instance, fakeEngine, constants);
+
+            var result = controller.GetDays();
+            var okResult = Assert.IsType<OkObjectResult>(result);
+            var days = Assert.IsAssignableFrom<IEnumerable<TradingDayInfo>>(okResult.Value).ToList();
+
+            Assert.Equal(2, days.Count);
+            Assert.Contains(days, d => d.TradingDay == "08-11-21");
+            Assert.Contains(days, d => d.TradingDay == "13-11-21");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public async Task Start_WithSpecificTradingDay_UsesTradingDayPath()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var targetFile = Path.Combine(tempDir, "debs2022-gc-trading-day-08-11-21.csv");
+            File.WriteAllText(targetFile, "Id,SecType\n");
+
+            var constants = new FakeConstants { CsvDirectory = tempDir };
+            var fakeEngine = new FakeSimulationEngine();
+            var controller = new SimulatorController(NullLogger<SimulatorController>.Instance, fakeEngine, constants);
+
+            var request = new StartSimulationRequest(null, 1.0, "08-11-21");
+            var result = await controller.Start(request);
+
+            Assert.IsType<AcceptedResult>(result);
+            Assert.Equal(targetFile, fakeEngine.LastStartedPath);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public async Task Start_WithInvalidTradingDay_ReturnsBadRequest()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var constants = new FakeConstants { CsvDirectory = tempDir };
+            var fakeEngine = new FakeSimulationEngine();
+            var controller = new SimulatorController(NullLogger<SimulatorController>.Instance, fakeEngine, constants);
+
+            var request = new StartSimulationRequest(null, 1.0, "99-99-99");
+            var result = await controller.Start(request);
+
+            var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+            Assert.Contains("not found", badRequest.Value?.ToString() ?? "", StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, true);
+        }
     }
 
     [Fact]
