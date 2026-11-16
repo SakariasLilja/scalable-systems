@@ -15,6 +15,32 @@ public class SymbolCatalogServiceTests
     }
 
     [Fact]
+    public void SearchSymbols_IgnoresCommentsAndHeaderLines()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var csvPath = Path.Combine(tempDir, "debs2022-gc-trading-day-test.csv");
+            var content = "# Comment line 1\n# Comment line 2\nID,SecType\n#'Unique ID',...\nAAPL,1\nMSFT,1\n";
+            File.WriteAllText(csvPath, content);
+
+            var constants = new FakeConstants { CsvDirectory = tempDir };
+            var service = new SymbolCatalogService(NullLogger<SymbolCatalogService>.Instance, constants);
+            var results = service.SearchSymbols("", 10);
+
+            Assert.Equal(2, results.Count);
+            Assert.DoesNotContain("ID", results);
+            Assert.DoesNotContain("#'Unique ID'", results);
+            Assert.Equal(["AAPL", "MSFT"], results);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
     public void SearchSymbols_WithEmptyQuery_ReturnsTopSymbolsAlphabetically()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());

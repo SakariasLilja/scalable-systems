@@ -106,6 +106,7 @@
         placeholder="Search or pick symbol (e.g. RDSA.NL, A0HN5C.ETR)..."
         bind:value={search_input}
         on:focus={handle_focus}
+        on:click={() => { if (!is_open) handle_focus(); }}
         on:input={handle_input}
         on:keydown={handle_keydown}
         class="search-input"
