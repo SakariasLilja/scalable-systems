@@ -27,6 +27,7 @@ builder.Services.AddSingleton<IWindowStreamConsumer>(sp => sp.GetRequiredService
 builder.Services.AddHostedService(sp => sp.GetRequiredService<WindowStreamConsumer>());
 builder.Services.AddHostedService<DbBatchWriter>();
 builder.Services.AddSingleton<ISseService, SseService>();
+builder.Services.AddSingleton<ISymbolCatalogService, SymbolCatalogService>();
 
 builder.Services.AddSingleton<IConstants, Constants>(
     provider => new Constants(
