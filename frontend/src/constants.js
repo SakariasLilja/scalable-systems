@@ -10,6 +10,7 @@ export const subscription_states = {
 export const tracked_poll_interval_ms = 10000;
 export const active_chart_update_interval_ms = 2000;
 export const default_simulation_speed = 1.0;
+export const alert_dismiss_timeout_ms = 4000;
 
 export const chart_colors = {
   ema_38: '#38bdf8',

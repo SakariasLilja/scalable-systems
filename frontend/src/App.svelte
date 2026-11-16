@@ -9,7 +9,7 @@
     connect_sse,
     set_symbol_state
   } from './lib/sse_service.js';
-  import { default_tracked_symbols, subscription_states } from './constants.js';
+  import { default_tracked_symbols, subscription_states, alert_dismiss_timeout_ms } from './constants.js';
 
   let client_id = '';
   let event_source = null;
@@ -31,7 +31,7 @@
   }
 
   function handle_sse_event(event_type, payload) {
-    if (event_type === 'connected' || event_type === 'open') {
+    if (event_type === 'connected') {
       re_register_subscriptions();
       return;
     }
@@ -61,7 +61,7 @@
           symbol_data = symbol_data;
         }
         delete alert_timers[symbol];
-      }, 4000);
+      }, alert_dismiss_timeout_ms);
     } else if (event_type === 'active_update') {
       const { symbol, closePrice, ema38, ema100 } = payload;
       symbol_data[symbol] = {
@@ -120,19 +120,16 @@
     }
   }
 
-  onMount(async () => {
+  onMount(() => {
     client_id = get_or_create_client_id();
     event_source = connect_sse(client_id, handle_sse_event);
-
-    for (const sym of tracked_symbols) {
-      await set_symbol_state(client_id, sym, subscription_states.tracked);
-    }
   });
 
   onDestroy(() => {
     if (event_source) {
       event_source.close();
     }
+    Object.values(alert_timers).forEach(clearTimeout);
   });
 </script>
 

@@ -50,7 +50,7 @@ public class SimulationEngineTests
     }
 
     [Fact]
-    public async Task StartSimulation_CompletesChannel_WhenPlaybackExhausts()
+    public async Task StartSimulation_CanBeRestarted_AndContinuesStreamingTicks()
     {
         var records = new List<MinimalTradingEntry>
         {
@@ -59,15 +59,28 @@ public class SimulationEngineTests
         var dummyService = new DummyCsvService(records);
         var engine = new SimulationEngine(dummyService);
 
+        // Run 1
         await engine.StartSimulation("dummy.csv", 10000.0);
         var channel = engine.GetEventChannel();
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-        var readSuccess = await channel.WaitToReadAsync(cts.Token);
-        Assert.True(readSuccess);
-        Assert.True(channel.TryRead(out _));
+        using var cts1 = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var readSuccess1 = await channel.WaitToReadAsync(cts1.Token);
+        Assert.True(readSuccess1);
+        Assert.True(channel.TryRead(out var readRecord1));
+        Assert.Equal("S1", readRecord1.Id);
 
-        await channel.Completion.WaitAsync(TimeSpan.FromSeconds(2));
-        Assert.True(channel.Completion.IsCompleted);
+        // Wait until stopped
+        while (engine.GetStatus().State == SimulationState.Running)
+        {
+            await Task.Delay(20);
+        }
+
+        // Run 2: Start again
+        await engine.StartSimulation("dummy.csv", 10000.0);
+        using var cts2 = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var readSuccess2 = await channel.WaitToReadAsync(cts2.Token);
+        Assert.True(readSuccess2);
+        Assert.True(channel.TryRead(out var readRecord2));
+        Assert.Equal("S1", readRecord2.Id);
     }
 }

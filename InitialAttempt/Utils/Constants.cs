@@ -58,7 +58,7 @@ public class Constants(
     public string CSV_DIRECTORY => CsvDirectory;
 
     private static string TrimQuotes(string value) =>
-        value.Trim('"', '\'');
+        value.Trim().Trim('"', '\'').Trim();
 
     private string LogEnvErrorWithFallback(string environmentVariable, string fallback)
     {

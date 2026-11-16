@@ -57,11 +57,6 @@ public class SimulationEngine : ISimulationEngine
                 return Task.CompletedTask;
             }
 
-            if (channel.Reader.Completion.IsCompleted)
-            {
-                channel = CreateChannel();
-            }
-
             this.speedFactor = speedFactor;
             this.processedCount = 0;
             this.currentSimulationTime = null;
@@ -185,7 +180,6 @@ public class SimulationEngine : ISimulationEngine
         }
         finally
         {
-            channel.Writer.TryComplete();
             lock (stateLock)
             {
                 state = SimulationState.Stopped;
