@@ -3,7 +3,8 @@
   import {
     default_simulation_speed,
     active_chart_update_interval_ms,
-    default_trading_day
+    default_trading_day,
+    bytes_per_mb
   } from '../constants.js';
   import {
     start_simulation,
@@ -85,7 +86,7 @@
         <select bind:value={selected_day} class="day-select">
           {#each trading_days as d}
             <option value={d.tradingDay}>
-              {d.tradingDay} ({Math.round(d.fileSizeBytes / (1024 * 1024))} MB)
+              {d.tradingDay} ({Math.round(d.fileSizeBytes / bytes_per_mb)} MB)
             </option>
           {/each}
         </select>

@@ -15,6 +15,7 @@ export const default_symbol_search_limit = 20;
 export const search_debounce_ms = 150;
 export const default_trading_day = '08-11-21';
 export const tracked_symbols_storage_key = 'tick_detector_tracked_symbols';
+export const bytes_per_mb = 1048576;
 
 export const chart_colors = {
   ema_38: '#38bdf8',

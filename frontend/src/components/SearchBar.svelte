@@ -11,10 +11,14 @@
   let highlighted_index = -1;
   let debounce_timer = null;
   let container_ref = null;
+  let search_seq = 0;
 
   async function fetch_suggestions(query) {
+    const seq = ++search_seq;
     const results = await search_symbols(query, default_symbol_search_limit);
-    suggestions = results || [];
+    if (seq === search_seq && is_open) {
+      suggestions = results || [];
+    }
   }
 
   function handle_focus() {
@@ -35,6 +39,10 @@
 
   function select_symbol(symbol) {
     if (!symbol) return;
+    if (debounce_timer) {
+      clearTimeout(debounce_timer);
+      debounce_timer = null;
+    }
     dispatch('add_symbol', { symbol: symbol.toUpperCase() });
     search_input = '';
     is_open = false;

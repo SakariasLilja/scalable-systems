@@ -23,8 +23,7 @@
         const parsed = JSON.parse(cached);
         if (Array.isArray(parsed)) return parsed;
       }
-    } catch (e) {
-      // fallback on invalid cache
+    } catch {
     }
     return [...default_tracked_symbols];
   }
@@ -32,8 +31,7 @@
   function save_tracked_symbols(symbols) {
     try {
       localStorage.setItem(tracked_symbols_storage_key, JSON.stringify(symbols));
-    } catch (e) {
-      // ignore storage errors
+    } catch {
     }
   }
 

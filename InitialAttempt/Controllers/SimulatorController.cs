@@ -5,7 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace InitialAttempt.Controllers;
 
 public record TradingDayInfo(string TradingDay, string FileName, long FileSizeBytes);
-public record StartSimulationRequest(string? FilePath = null, double SpeedFactor = 1.0, string? TradingDay = null);
+public record StartSimulationRequest(string? FilePath = null, double SpeedFactor = Constants.DefaultSimulationSpeed, string? TradingDay = null);
 public record SetSpeedRequest(double SpeedFactor);
 
 [ApiController]
@@ -30,9 +30,11 @@ public class SimulatorController(
 
         var days = files.Select(f =>
         {
-            var day = f.Name
-                .Replace(constants.CsvPrefix, "")
-                .Replace(constants.CsvSuffix, "");
+            var day = f.Name.StartsWith(constants.CsvPrefix, StringComparison.OrdinalIgnoreCase) &&
+                      f.Name.EndsWith(constants.CsvSuffix, StringComparison.OrdinalIgnoreCase) &&
+                      f.Name.Length >= constants.CsvPrefix.Length + constants.CsvSuffix.Length
+                ? f.Name[constants.CsvPrefix.Length..^constants.CsvSuffix.Length]
+                : f.Name;
             return new TradingDayInfo(day, f.Name, f.Length);
         })
         .OrderBy(d => d.TradingDay)
