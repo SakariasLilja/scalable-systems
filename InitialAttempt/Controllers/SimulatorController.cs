@@ -87,9 +87,9 @@ public class SimulatorController(
     [HttpPost("speed")]
     public IActionResult SetSpeed([FromBody] SetSpeedRequest request)
     {
-        if (request.SpeedFactor <= 0)
+        if (request.SpeedFactor < 0)
         {
-            return BadRequest("Speed factor must be greater than zero.");
+            return BadRequest("Speed factor cannot be negative.");
         }
 
         simulationEngine.SetSpeedFactor(request.SpeedFactor);

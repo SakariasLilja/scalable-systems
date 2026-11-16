@@ -147,4 +147,28 @@ public class SimulatorControllerTests
         Assert.Equal(5.0, fakeEngine.LastSetSpeed);
         Assert.IsType<OkResult>(result);
     }
+
+    [Fact]
+    public void SetSpeed_WithZeroSpeed_AllowsMaxSpeedAndReturnsOk()
+    {
+        var fakeEngine = new FakeSimulationEngine();
+        var controller = new SimulatorController(NullLogger<SimulatorController>.Instance, fakeEngine, new FakeConstants());
+
+        var result = controller.SetSpeed(new SetSpeedRequest(0.0));
+
+        Assert.Equal(0.0, fakeEngine.LastSetSpeed);
+        Assert.IsType<OkResult>(result);
+    }
+
+    [Fact]
+    public void SetSpeed_WithNegativeSpeed_ReturnsBadRequest()
+    {
+        var fakeEngine = new FakeSimulationEngine();
+        var controller = new SimulatorController(NullLogger<SimulatorController>.Instance, fakeEngine, new FakeConstants());
+
+        var result = controller.SetSpeed(new SetSpeedRequest(-1.0));
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Contains("negative", badRequest.Value?.ToString() ?? "", StringComparison.OrdinalIgnoreCase);
+    }
 }
