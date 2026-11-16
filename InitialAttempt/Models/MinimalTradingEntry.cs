@@ -23,4 +23,15 @@ public partial class MinimalTradingEntry
     [CsvColumn("Trading date")]
     [CsvFormat("dd-MM-yyyy")]
     public DateOnly? TradingDate { get; set; }
+
+    [CsvColumn("Date")]
+    [CsvFormat("dd-MM-yyyy")]
+    public DateOnly? Date { get; set; }
+
+    [CsvColumn("Time")]
+    [CsvFormat("HH:mm:ss.fff")]
+    public TimeOnly? Time { get; set; }
+
+    public DateOnly? EffectiveDate => TradingDate ?? Date;
+    public TimeOnly? EffectiveTime => TradingTime ?? Time;
 }

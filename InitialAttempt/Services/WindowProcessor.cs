@@ -26,13 +26,13 @@ public class WindowProcessor : IWindowProcessor
 
     public FinalizedWindowRecord? ProcessTick(MinimalTradingEntry tick)
     {
-        if (!tick.Last.HasValue || !tick.TradingDate.HasValue || !tick.TradingTime.HasValue)
+        if (!tick.Last.HasValue || !tick.EffectiveDate.HasValue || !tick.EffectiveTime.HasValue)
         {
             return null;
         }
 
-        var date = tick.TradingDate.Value;
-        var time = tick.TradingTime.Value;
+        var date = tick.EffectiveDate.Value;
+        var time = tick.EffectiveTime.Value;
         int minuteBucket = (time.Minute / Constants.WindowDurationMinutes) * Constants.WindowDurationMinutes;
         var cestTime = new DateTimeOffset(date.Year, date.Month, date.Day, time.Hour, minuteBucket, 0, CestOffset);
         var tickWindowStart = cestTime.UtcDateTime;
