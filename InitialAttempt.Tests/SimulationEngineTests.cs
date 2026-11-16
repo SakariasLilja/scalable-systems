@@ -32,6 +32,47 @@ public class SimulationEngineTests
     }
 
     [Fact]
+    public void CalculateDelay_WithHugeGap_CapsAtMaxSimulationDelay()
+    {
+        long fiveYearsMs = 5L * 365 * 24 * 3600 * 1000;
+        var delay = SimulationEngine.CalculateDelay(fiveYearsMs, 1.0);
+        Assert.Equal(InitialAttempt.Utils.Constants.MaxSimulationDelayMs, delay);
+    }
+
+    [Fact]
+    public void CalculateDelay_WithZeroOrNegativeSpeed_ReturnsZero()
+    {
+        var delay = SimulationEngine.CalculateDelay(5000, 0.0);
+        Assert.Equal(0, delay);
+
+        var delayNegative = SimulationEngine.CalculateDelay(5000, -1.0);
+        Assert.Equal(0, delayNegative);
+    }
+
+    [Fact]
+    public async Task RunPlaybackLoop_WithMissingDates_DoesNotStall()
+    {
+        var records = new List<MinimalTradingEntry>
+        {
+            new() { Id = "S1", Last = 10m, Date = new DateOnly(2021, 11, 8), Time = new TimeOnly(1, 0, 0) },
+            new() { Id = "S1", Last = 11m, Date = new DateOnly(2021, 11, 8), Time = new TimeOnly(1, 0, 1) },
+            new() { Id = "S1", Last = 12m, TradingDate = new DateOnly(2021, 11, 8), TradingTime = new TimeOnly(1, 0, 2) },
+            new() { Id = "S1", Last = 13m, Date = null, Time = null, TradingDate = null, TradingTime = null }
+        };
+
+        var dummyService = new DummyCsvService(records);
+        var engine = new SimulationEngine(dummyService);
+
+        var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        await engine.StartSimulation("dummy.csv", 1000.0, cts.Token);
+
+        await Task.Delay(200);
+        var status = engine.GetStatus();
+
+        Assert.Equal(4, status.ProcessedCount);
+    }
+
+    [Fact]
     public async Task StartSimulation_ReturnsImmediately_WithoutBlockingForPlayback()
     {
         var records = new List<MinimalTradingEntry>

@@ -40,9 +40,9 @@ public class SimulationEngine : ISimulationEngine
         }
 
         double scaled = deltaMs / speedFactor;
-        if (scaled > int.MaxValue)
+        if (scaled > Constants.MaxSimulationDelayMs)
         {
-            return int.MaxValue;
+            return Constants.MaxSimulationDelayMs;
         }
 
         return (long)scaled;
@@ -139,13 +139,13 @@ public class SimulationEngine : ISimulationEngine
                 pauseEvent.Wait(ct);
 
                 DateTime currentEventTime;
-                if (record.TradingDate.HasValue && record.TradingTime.HasValue)
+                if (record.EffectiveDate.HasValue && record.EffectiveTime.HasValue)
                 {
-                    currentEventTime = record.TradingDate.Value.ToDateTime(record.TradingTime.Value);
+                    currentEventTime = record.EffectiveDate.Value.ToDateTime(record.EffectiveTime.Value);
                 }
                 else
                 {
-                    currentEventTime = DateTime.UtcNow;
+                    currentEventTime = previousEventTime ?? DateTime.UtcNow;
                 }
 
                 if (previousEventTime.HasValue)

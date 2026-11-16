@@ -40,6 +40,7 @@ public class Constants(
     public const int WindowConsumerChannelCapacity = 50000;
     public const int DefaultSymbolSearchLimit = 20;
     public const int MaxSymbolCatalogSampleLines = 500000;
+    public const int MaxSimulationDelayMs = 2000;
 
     public const string SubscriptionHidden = "hidden";
     public const string SubscriptionTracked = "tracked";
