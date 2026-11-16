@@ -124,4 +124,33 @@ public class SimulationEngineTests
         Assert.True(channel.TryRead(out var readRecord2));
         Assert.Equal("S1", readRecord2.Id);
     }
+
+    private class ThrowingCsvService(Exception exceptionToThrow) : IReadCsvService
+    {
+        public IEnumerable<MinimalTradingEntry> StreamData(string filePath, CancellationToken cancellationToken) => StreamTradeEvents(filePath, cancellationToken);
+
+        public IEnumerable<MinimalTradingEntry> StreamTradeEvents(string filePath, CancellationToken cancellationToken)
+        {
+            throw exceptionToThrow;
+        }
+    }
+
+    [Fact]
+    public async Task RunPlaybackLoop_WhenExceptionOccurs_SetsLastErrorAndStops()
+    {
+        var throwingService = new ThrowingCsvService(new InvalidOperationException("CSV disk error"));
+        var engine = new SimulationEngine(throwingService);
+
+        await engine.StartSimulation("error.csv", 1.0);
+
+        var deadline = DateTime.UtcNow.AddSeconds(2);
+        while (engine.GetStatus().State == SimulationState.Running && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(20);
+        }
+
+        var status = engine.GetStatus();
+        Assert.Equal(SimulationState.Stopped, status.State);
+        Assert.Equal("CSV disk error", status.LastError);
+    }
 }

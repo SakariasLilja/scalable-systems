@@ -15,7 +15,8 @@ public record SimulationStatus(
     double SpeedFactor,
     long ProcessedCount,
     DateTime? CurrentSimulationTime,
-    TimeSpan ElapsedWallTime
+    TimeSpan ElapsedWallTime,
+    string? LastError = null
 );
 
 public interface ISimulationEngine

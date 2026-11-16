@@ -2,12 +2,15 @@ using System.Diagnostics;
 using System.Threading.Channels;
 using InitialAttempt.Models;
 using InitialAttempt.Utils;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace InitialAttempt.Services;
 
 public class SimulationEngine : ISimulationEngine
 {
     private readonly IReadCsvService readCsvService;
+    private readonly ILogger<SimulationEngine> logger;
     private Channel<MinimalTradingEntry> channel;
     private readonly object stateLock = new();
     private readonly ManualResetEventSlim pauseEvent = new(true);
@@ -16,12 +19,14 @@ public class SimulationEngine : ISimulationEngine
     private double speedFactor = Constants.DefaultSimulationSpeed;
     private long processedCount = 0;
     private DateTime? currentSimulationTime = null;
+    private string? lastError = null;
     private Stopwatch wallStopwatch = new();
     private CancellationTokenSource? playbackCts;
 
-    public SimulationEngine(IReadCsvService readCsvService)
+    public SimulationEngine(IReadCsvService readCsvService, ILogger<SimulationEngine>? logger = null)
     {
         this.readCsvService = readCsvService;
+        this.logger = logger ?? NullLogger<SimulationEngine>.Instance;
         this.channel = CreateChannel();
     }
 
@@ -60,6 +65,7 @@ public class SimulationEngine : ISimulationEngine
             this.speedFactor = speedFactor;
             this.processedCount = 0;
             this.currentSimulationTime = null;
+            this.lastError = null;
             this.state = SimulationState.Running;
             this.playbackCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             this.wallStopwatch.Restart();
@@ -113,7 +119,8 @@ public class SimulationEngine : ISimulationEngine
                 speedFactor,
                 Interlocked.Read(ref processedCount),
                 currentSimulationTime,
-                wallStopwatch.Elapsed
+                wallStopwatch.Elapsed,
+                lastError
             );
         }
     }
@@ -177,6 +184,14 @@ public class SimulationEngine : ISimulationEngine
         }
         catch (OperationCanceledException)
         {
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Simulation playback loop crashed unexpectedly after {ProcessedCount} ticks at simulation time {SimulationTime}", processedCount, currentSimulationTime);
+            lock (stateLock)
+            {
+                lastError = ex.Message;
+            }
         }
         finally
         {
