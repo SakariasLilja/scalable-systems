@@ -1,4 +1,9 @@
-import { api_base_url, sse_stream_url } from '../constants.js';
+import {
+  api_base_url,
+  sse_stream_url,
+  default_symbol_search_limit,
+  default_simulation_speed
+} from '../constants.js';
 
 export function get_or_create_client_id() {
   const storage_key = 'tick_detector_client_id';
@@ -70,11 +75,37 @@ export async function fetch_history(symbol, limit = 50) {
   return response.json();
 }
 
-export async function start_simulation(file_path = null, speed_factor = 1.0) {
+export async function get_trading_days() {
+  try {
+    const response = await fetch(`${api_base_url}/api/simulator/days`);
+    if (!response.ok) return [];
+    return await response.json();
+  } catch (err) {
+    console.error('Failed to get trading days:', err);
+    return [];
+  }
+}
+
+export async function search_symbols(query = '', limit = default_symbol_search_limit) {
+  try {
+    const response = await fetch(`${api_base_url}/api/symbols/search?q=${encodeURIComponent(query)}&limit=${limit}`);
+    if (!response.ok) return [];
+    return await response.json();
+  } catch (err) {
+    console.error('Failed to search symbols:', err);
+    return [];
+  }
+}
+
+export async function start_simulation(file_path = null, speed_factor = default_simulation_speed, trading_day = null) {
+  const payload = { speedFactor: speed_factor };
+  if (trading_day) payload.tradingDay = trading_day;
+  if (file_path) payload.filePath = file_path;
+
   const response = await fetch(`${api_base_url}/api/simulator/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ filePath: file_path, speedFactor: speed_factor })
+    body: JSON.stringify(payload)
   });
   return response.json();
 }

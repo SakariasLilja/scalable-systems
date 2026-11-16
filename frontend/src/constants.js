@@ -11,6 +11,10 @@ export const tracked_poll_interval_ms = 10000;
 export const active_chart_update_interval_ms = 2000;
 export const default_simulation_speed = 1.0;
 export const alert_dismiss_timeout_ms = 4000;
+export const default_symbol_search_limit = 20;
+export const search_debounce_ms = 150;
+export const default_trading_day = '08-11-21';
+export const tracked_symbols_storage_key = 'tick_detector_tracked_symbols';
 
 export const chart_colors = {
   ema_38: '#38bdf8',
@@ -20,9 +24,4 @@ export const chart_colors = {
   sell_alert: '#3b82f6'
 };
 
-export const default_tracked_symbols = [
-  'RDSA.NL',
-  'A0HN5C.ETR',
-  'CBOT.FR',
-  'SGFI.FR'
-];
+export const default_tracked_symbols = [];
