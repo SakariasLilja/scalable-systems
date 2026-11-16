@@ -2,7 +2,7 @@ using DotNetEnv;
 using InitialAttempt.Services;
 using InitialAttempt.Utils;
 
-Env.Load();
+Env.TraversePath().Load();
 
 var builder = WebApplication.CreateBuilder(args);
 
