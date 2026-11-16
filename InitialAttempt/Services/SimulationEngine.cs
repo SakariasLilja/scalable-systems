@@ -187,7 +187,7 @@ public class SimulationEngine : ISimulationEngine
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Simulation playback loop crashed unexpectedly after {ProcessedCount} ticks at simulation time {SimulationTime}", processedCount, currentSimulationTime);
+            logger.LogError(ex, "Simulation playback loop crashed unexpectedly after {ProcessedCount} ticks at simulation time {SimulationTime}", Interlocked.Read(ref processedCount), currentSimulationTime);
             lock (stateLock)
             {
                 lastError = ex.Message;
