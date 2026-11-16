@@ -18,11 +18,17 @@
   let sim_status = {
     state: 0,
     speedFactor: default_simulation_speed,
-    processedCount: 0
+    processedCount: 0,
+    lastError: null
   };
   let trading_days = [];
   let selected_day = default_trading_day;
   let poll_timer = null;
+  let dismissed_error = null;
+
+  function dismiss_error() {
+    dismissed_error = sim_status.lastError;
+  }
 
   async function refresh_status() {
     const data = await get_simulation_status();
@@ -32,6 +38,7 @@
   }
 
   async function handle_start() {
+    dismissed_error = null;
     await start_simulation(null, sim_status.speedFactor || default_simulation_speed, selected_day);
     await refresh_status();
   }
@@ -70,6 +77,13 @@
   });
 </script>
 
+{#if sim_status.lastError && sim_status.lastError !== dismissed_error}
+  <div class="error-banner">
+    <span class="error-message">Simulation Error: {sim_status.lastError}</span>
+    <button class="error-dismiss-btn" on:click={dismiss_error} aria-label="Dismiss error">✕</button>
+  </div>
+{/if}
+
 <div class="controls-card">
   <div class="controls-info">
     <span class="status-indicator">
@@ -105,6 +119,33 @@
 </div>
 
 <style>
+  .error-banner {
+    background-color: #7f1d1d;
+    border: 1px solid #ef4444;
+    color: #fecaca;
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    margin-bottom: 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.875rem;
+  }
+  .error-message {
+    font-weight: 500;
+  }
+  .error-dismiss-btn {
+    background: transparent;
+    border: none;
+    color: #fecaca;
+    font-size: 1rem;
+    cursor: pointer;
+    padding: 0 0.25rem;
+    line-height: 1;
+  }
+  .error-dismiss-btn:hover {
+    color: #ffffff;
+  }
   .controls-card {
     background-color: #1e293b;
     border: 1px solid #334155;
