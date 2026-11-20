@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\shared\Trading.Shared.csproj" />
+    <ProjectReference Include="..\worker\Trading.Worker.csproj" />
   </ItemGroup>
 
 </Project>

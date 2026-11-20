@@ -1,4 +1,5 @@
 <Solution>
   <Project Path="shared/Trading.Shared.csproj" />
+  <Project Path="worker/Trading.Worker.csproj" />
   <Project Path="tests/Trading.Tests.csproj" />
 </Solution>
