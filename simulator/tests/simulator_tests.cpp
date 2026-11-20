@@ -1,3 +1,4 @@
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -5,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "burst_tracker.hpp"
 #include "constants.hpp"
 #include "csv_json.hpp"
 #include "day_discovery.hpp"
@@ -191,10 +193,46 @@ void test_timestamp_pacer_handles_colons_and_caps_day_transition_gap() {
     CHECK(pacer.compute_delay_ms(t_interleave_next, 1.0) == 500);
 }
 
+static void test_burst_tracker() {
+    sim::BurstTracker tracker(10000);
+    CHECK(tracker.peak_count() == 0);
+    CHECK(tracker.peak_rows_per_sim_sec() == 0.0);
+
+    tracker.record(std::nullopt);
+    CHECK(tracker.peak_count() == 0);
+
+    tracker.record(10000);
+    tracker.record(12000);
+    tracker.record(19999);
+    CHECK(tracker.peak_count() == 3);
+    CHECK(tracker.peak_bucket_start_ms() == 10000);
+
+    for (int i = 0; i < 7; ++i) {
+        tracker.record(20000 + i * 1000);
+    }
+    CHECK(tracker.peak_count() == 7);
+    CHECK(tracker.peak_bucket_start_ms() == 20000);
+
+    tracker.record(0);
+    tracker.record(5000);
+    CHECK(tracker.peak_count() == 7);
+    CHECK(tracker.peak_bucket_start_ms() == 20000);
+
+    tracker.record(30000);
+    tracker.record(35000);
+    CHECK(tracker.peak_count() == 7);
+    CHECK(std::abs(tracker.peak_rows_per_sim_sec() - 0.7) < 1e-9);
+
+    CHECK(std::abs(sim::compute_maintainable_speedup(70000.0, 700.0) - 100.0) < 1e-9);
+    CHECK(sim::compute_maintainable_speedup(70000.0, 0.0) == 0.0);
+    CHECK(sim::compute_maintainable_speedup(0.0, 700.0) == 0.0);
+}
+
 int main() {
     test_discover_trading_days_chronological_and_filters_zone_identifier();
     test_csv_row_to_json_preserves_raw_values_and_escapes_quotes();
     test_timestamp_pacer_handles_colons_and_caps_day_transition_gap();
+    test_burst_tracker();
     std::cout << "All simulator tests passed.\n";
     return 0;
 }

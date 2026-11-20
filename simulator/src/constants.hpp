@@ -7,6 +7,8 @@ namespace sim {
 
 inline constexpr int64_t MAX_SIMULATION_DELAY_MS = 2000;
 inline constexpr int64_t DEFAULT_PROBE_TICKS = 20000;
+inline constexpr int64_t DEFAULT_BURST_BUCKET_SEC = 10;
+inline constexpr int64_t STRICT_BURST_BUCKET_SEC = 1;
 inline constexpr int64_t MS_PER_SECOND = 1000;
 inline constexpr int64_t SECONDS_PER_MINUTE = 60;
 inline constexpr int64_t MINUTES_PER_HOUR = 60;

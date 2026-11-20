@@ -16,6 +16,7 @@
 #include <thread>
 #include <vector>
 
+#include "burst_tracker.hpp"
 #include "constants.hpp"
 #include "csv_json.hpp"
 #include "day_discovery.hpp"
@@ -40,7 +41,10 @@ struct CliOptions {
     std::string file;
     std::string start_day;
     bool probe = false;
+    bool offline = false;
+    int64_t bucket_sec = sim::DEFAULT_BURST_BUCKET_SEC;
     int64_t probe_ticks = sim::DEFAULT_PROBE_TICKS;
+    bool probe_ticks_explicit = false;
     bool help = false;
 };
 
@@ -59,8 +63,11 @@ void print_usage(const char* prog) {
               << "  --file <path>         Run an explicit single CSV file\n"
               << "  --start-day <dd-mm-yy> Start from trading day through end of week\n"
               << "  --probe               Measure max-speed ingestion across discovered days\n"
+              << "  --offline             With --probe: offline CSV reader & burst speedup probe (no HTTP)\n"
+              << "  --bucket-sec <int>    Burst window size in seconds for --offline probe (default: "
+              << sim::DEFAULT_BURST_BUCKET_SEC << ")\n"
               << "  --probe-ticks <N>     Ticks per day in probe mode; 0 = full file (default: "
-              << sim::DEFAULT_PROBE_TICKS << ")\n"
+              << sim::DEFAULT_PROBE_TICKS << ", 0 in --offline)\n"
               << "  --help                Show this help message\n";
 }
 
@@ -93,6 +100,10 @@ bool parse_args(int argc, char* argv[], CliOptions& opts, std::string& err_msg) 
         }
         if (key == "--probe") {
             opts.probe = true;
+            continue;
+        }
+        if (key == "--offline") {
+            opts.offline = true;
             continue;
         }
 
@@ -139,6 +150,20 @@ bool parse_args(int argc, char* argv[], CliOptions& opts, std::string& err_msg) 
         } else if (key == "--start-day") {
             if (!next_value(i, arg, val)) return false;
             opts.start_day = std::move(val);
+        } else if (key == "--bucket-sec") {
+            if (!next_value(i, arg, val)) return false;
+            try {
+                std::size_t pos = 0;
+                int64_t s = std::stoll(val, &pos);
+                if (pos != val.size() || s <= 0) {
+                    err_msg = "Invalid --bucket-sec value: " + val;
+                    return false;
+                }
+                opts.bucket_sec = s;
+            } catch (...) {
+                err_msg = "Invalid --bucket-sec value: " + val;
+                return false;
+            }
         } else if (key == "--probe-ticks") {
             if (!next_value(i, arg, val)) return false;
             try {
@@ -149,6 +174,7 @@ bool parse_args(int argc, char* argv[], CliOptions& opts, std::string& err_msg) 
                     return false;
                 }
                 opts.probe_ticks = n;
+                opts.probe_ticks_explicit = true;
             } catch (...) {
                 err_msg = "Invalid --probe-ticks value: " + val;
                 return false;
@@ -498,6 +524,118 @@ int run_probe_mode(const CliOptions& opts,
     return total_errors > 0 ? 1 : 0;
 }
 
+int run_offline_probe_mode(const CliOptions& opts, const std::vector<std::string>& files) {
+    int64_t effective_probe_ticks = opts.probe_ticks_explicit ? opts.probe_ticks : 0;
+    int64_t primary_bucket_ms = opts.bucket_sec * sim::MS_PER_SECOND;
+    int64_t strict_bucket_ms = sim::STRICT_BURST_BUCKET_SEC * sim::MS_PER_SECOND;
+
+    uint64_t total_rows = 0;
+    uint64_t total_json_bytes = 0;
+    double total_wall_sec = 0.0;
+    double worst_primary_sim_rps = 0.0;
+    double worst_strict_sim_rps = 0.0;
+    std::string worst_primary_file;
+    std::string worst_strict_file;
+    std::size_t probed_days = 0;
+
+    std::vector<char> io_buf(sim::FILE_STREAM_BUFFER_BYTES);
+
+    for (const auto& path : files) {
+        if (g_stop_requested.load(std::memory_order_relaxed)) {
+            break;
+        }
+        std::ifstream in(path, std::ios::in | std::ios::binary);
+        if (!in.is_open()) {
+            std::cerr << "Failed to open CSV file: " << path << "\n";
+            continue;
+        }
+        in.rdbuf()->pubsetbuf(io_buf.data(), static_cast<std::streamsize>(io_buf.size()));
+
+        std::string filename = std::filesystem::path(path).filename().string();
+        sim::BurstTracker primary_tracker(primary_bucket_ms);
+        sim::BurstTracker strict_tracker(strict_bucket_ms);
+        int64_t day_rows = 0;
+        std::vector<std::string> headers;
+        std::string line;
+
+        auto day_start_tp = std::chrono::steady_clock::now();
+
+        while (!g_stop_requested.load(std::memory_order_relaxed) && std::getline(in, line)) {
+            std::string_view clean = sim::strip_cr(line);
+            if (sim::is_comment_or_empty(clean)) {
+                continue;
+            }
+            if (headers.empty()) {
+                headers = sim::parse_csv_line(clean);
+                continue;
+            }
+
+            sim::ParsedRow row = sim::csv_row_to_json(headers, clean);
+            total_json_bytes += row.json_payload.size();
+            auto epoch_ms = sim::TimestampPacer::resolve_row_epoch_ms(row);
+            primary_tracker.record(epoch_ms);
+            strict_tracker.record(epoch_ms);
+
+            ++day_rows;
+            if (effective_probe_ticks > 0 && day_rows >= effective_probe_ticks) {
+                break;
+            }
+        }
+
+        auto day_end_tp = std::chrono::steady_clock::now();
+        double wall_sec = std::chrono::duration<double>(day_end_tp - day_start_tp).count();
+        double reader_rps = (wall_sec > 0.0) ? static_cast<double>(day_rows) / wall_sec : 0.0;
+        double peak_primary_rps = primary_tracker.peak_rows_per_sim_sec();
+        double peak_strict_rps = strict_tracker.peak_rows_per_sim_sec();
+        double maint_primary = sim::compute_maintainable_speedup(reader_rps, peak_primary_rps);
+        double maint_strict = sim::compute_maintainable_speedup(reader_rps, peak_strict_rps);
+
+        total_rows += static_cast<uint64_t>(day_rows);
+        total_wall_sec += wall_sec;
+        if (peak_primary_rps > worst_primary_sim_rps) {
+            worst_primary_sim_rps = peak_primary_rps;
+            worst_primary_file = filename;
+        }
+        if (peak_strict_rps > worst_strict_sim_rps) {
+            worst_strict_sim_rps = peak_strict_rps;
+            worst_strict_file = filename;
+        }
+        ++probed_days;
+
+        std::cout << std::fixed << std::setprecision(2)
+                  << "[offline-probe] file=" << filename
+                  << " rows=" << day_rows
+                  << " wall=" << wall_sec << "s"
+                  << " reader_rows/s=" << std::setprecision(1) << reader_rps
+                  << " peak_" << opts.bucket_sec << "s=" << peak_primary_rps << "/s"
+                  << " peak_1s=" << peak_strict_rps << "/s"
+                  << " maintainable_" << opts.bucket_sec << "s=" << std::setprecision(2) << maint_primary << "x"
+                  << " maintainable_1s=" << maint_strict << "x\n";
+    }
+
+    if (probed_days == 0) {
+        std::cerr << "No trading days probed.\n";
+        return 1;
+    }
+
+    double overall_reader_rps = (total_wall_sec > 0.0) ? static_cast<double>(total_rows) / total_wall_sec : 0.0;
+    double week_maint_primary = sim::compute_maintainable_speedup(overall_reader_rps, worst_primary_sim_rps);
+    double week_maint_strict = sim::compute_maintainable_speedup(overall_reader_rps, worst_strict_sim_rps);
+
+    std::cout << std::fixed << std::setprecision(2)
+              << "[offline-probe-summary] days=" << probed_days
+              << " total_rows=" << total_rows
+              << " json_mb=" << (static_cast<double>(total_json_bytes) / (1024.0 * 1024.0))
+              << " wall=" << total_wall_sec << "s"
+              << " reader_rows/s=" << std::setprecision(1) << overall_reader_rps
+              << " worst_" << opts.bucket_sec << "s=" << worst_primary_sim_rps << "/s(" << worst_primary_file << ")"
+              << " worst_1s=" << worst_strict_sim_rps << "/s(" << worst_strict_file << ")"
+              << " maintainable_" << opts.bucket_sec << "s=" << std::setprecision(2) << week_maint_primary << "x"
+              << " maintainable_1s=" << week_maint_strict << "x\n";
+
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -517,12 +655,6 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    auto target_url = sim::parse_http_url(opts.url);
-    if (!target_url.has_value()) {
-        std::cerr << "Error: Invalid HTTP URL: " << opts.url << "\n";
-        return 1;
-    }
-
     std::vector<std::string> files;
     if (!opts.file.empty()) {
         std::error_code ec;
@@ -538,6 +670,16 @@ int main(int argc, char* argv[]) {
             std::cerr << "Error: No CSV trading day files found in: " << opts.data_dir << "\n";
             return 1;
         }
+    }
+
+    if (opts.probe && opts.offline) {
+        return run_offline_probe_mode(opts, files);
+    }
+
+    auto target_url = sim::parse_http_url(opts.url);
+    if (!target_url.has_value()) {
+        std::cerr << "Error: Invalid HTTP URL: " << opts.url << "\n";
+        return 1;
     }
 
     if (opts.probe) {

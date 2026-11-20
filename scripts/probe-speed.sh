@@ -9,6 +9,15 @@ if [[ ! -x "$SIM_BIN" ]]; then
   cmake --build "$REPO_ROOT/simulator/build"
 fi
 
+for arg in "$@"; do
+  if [[ "$arg" == "--offline" ]]; then
+    exec "$SIM_BIN" \
+      --probe \
+      --data-dir "$REPO_ROOT/data" \
+      "$@"
+  fi
+done
+
 CONCURRENCY="4"
 if [[ $# -ge 1 && "$1" != -* ]]; then
   CONCURRENCY="$1"
