@@ -186,4 +186,45 @@ public class WorkerPipelineTests
             await service.StopAsync(CancellationToken.None);
         }
     }
+
+    private class SlowPublishTracker : IWindowPublisher
+    {
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public CancellationToken ObservedToken { get; private set; }
+
+        public async Task PublishWindowAsync(FinalizedWindowRecord record, CancellationToken ct = default)
+        {
+            ObservedToken = ct;
+            Entered.TrySetResult();
+            await Task.Delay(5000, ct);
+        }
+    }
+
+    [Fact]
+    public async Task TickIngestionService_ResetDuringSlowPublish_CancelsInFlightPublish()
+    {
+        var processor = new WindowProcessor();
+        var dbWriter = new FakeDbBatchWriter();
+        var publisher = new SlowPublishTracker();
+        var service = new TickIngestionService(processor, dbWriter, publisher, NullLogger<TickIngestionService>.Instance);
+
+        using var cts = new CancellationTokenSource();
+        await service.StartAsync(cts.Token);
+
+        try
+        {
+            var date = new DateOnly(2021, 11, 8);
+            await service.EnqueueAsync(new MinimalTradingEntry { Id = "S1", Last = 100m, TradingDate = date, TradingTime = new TimeOnly(10, 0, 1) });
+            await service.EnqueueAsync(new MinimalTradingEntry { Id = "S1", Last = 110m, TradingDate = date, TradingTime = new TimeOnly(10, 5, 1) });
+
+            await publisher.Entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            service.Reset();
+
+            Assert.True(publisher.ObservedToken.IsCancellationRequested);
+        }
+        finally
+        {
+            await service.StopAsync(CancellationToken.None);
+        }
+    }
 }

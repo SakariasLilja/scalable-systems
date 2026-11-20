@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Trading.Server.Services;
 
@@ -14,8 +15,17 @@ public class DataController(
     [HttpDelete("/api/data")]
     public async Task<IActionResult> DeleteData(CancellationToken ct)
     {
+        bool workerReset = await workerResetClient.ResetWorkerAsync(ct);
+        if (!workerReset)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway, new
+            {
+                cleared = false,
+                error = "Failed to reset Worker state"
+            });
+        }
+
         await dbQueryService.TruncateTradingWindowsAsync(ct);
-        await workerResetClient.ResetWorkerAsync(ct);
         dbQueryService.ClearLiveSymbols();
         await redisResetPublisher.PublishResetAsync(ct);
         return Ok(new { cleared = true, time = DateTime.UtcNow });

@@ -29,6 +29,7 @@ public class TickIngestionService(
             SingleWriter = false
         });
     private readonly object processLock = new();
+    private CancellationTokenSource resetCts = new();
     private long ingestedCount;
 
     public long IngestedCount => Interlocked.Read(ref ingestedCount);
@@ -41,6 +42,7 @@ public class TickIngestionService(
 
     public void Reset()
     {
+        CancellationTokenSource oldCts;
         lock (processLock)
         {
             while (channel.Reader.TryRead(out _))
@@ -49,9 +51,13 @@ public class TickIngestionService(
 
             windowProcessor.Reset();
             dbBatchWriter.ClearBuffer();
+            oldCts = resetCts;
+            resetCts = new CancellationTokenSource();
             Interlocked.Exchange(ref ingestedCount, 0);
         }
 
+        oldCts.Cancel();
+        oldCts.Dispose();
         logger.LogInformation("Worker ingestion pipeline and EMA state reset");
     }
 
@@ -62,23 +68,29 @@ public class TickIngestionService(
             try
             {
                 FinalizedWindowRecord? finalized;
+                CancellationToken publishResetToken = CancellationToken.None;
                 lock (processLock)
                 {
                     finalized = windowProcessor.ProcessTick(tick);
                     if (finalized is not null)
                     {
                         dbBatchWriter.Enqueue(finalized);
+                        publishResetToken = resetCts.Token;
                     }
                 }
 
                 if (finalized is not null)
                 {
-                    await windowPublisher.PublishWindowAsync(finalized, stoppingToken);
+                    using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, publishResetToken);
+                    await windowPublisher.PublishWindowAsync(finalized, linkedCts.Token);
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
+            }
+            catch (OperationCanceledException)
+            {
             }
             catch (Exception ex)
             {

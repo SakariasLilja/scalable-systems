@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using StackExchange.Redis;
@@ -32,12 +33,7 @@ public class RedisResetPublisher(
     }
 }
 
-public class RedisWindowSubscriber(
-    IConnectionMultiplexer redis,
-    ISseService sseService,
-    IDatabaseQueryService dbQueryService,
-    ILogger<RedisWindowSubscriber> logger
-) : BackgroundService
+public class RedisWindowSubscriber : BackgroundService
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -47,46 +43,114 @@ public class RedisWindowSubscriber(
     private static readonly RedisChannel WindowsChannel = RedisChannel.Literal(Constants.RedisWindowsChannel);
     private static readonly RedisChannel ResetChannel = RedisChannel.Literal(Constants.RedisResetChannel);
 
+    private readonly IConnectionMultiplexer redis;
+    private readonly ISseService sseService;
+    private readonly IDatabaseQueryService dbQueryService;
+    private readonly ILogger<RedisWindowSubscriber> logger;
+    private readonly int retryDelayMs;
+
+    [ActivatorUtilitiesConstructor]
+    public RedisWindowSubscriber(
+        IConnectionMultiplexer redis,
+        ISseService sseService,
+        IDatabaseQueryService dbQueryService,
+        ILogger<RedisWindowSubscriber> logger)
+        : this(redis, sseService, dbQueryService, logger, Constants.RedisSubscribeRetryDelayMs)
+    {
+    }
+
+    public RedisWindowSubscriber(
+        IConnectionMultiplexer redis,
+        ISseService sseService,
+        IDatabaseQueryService dbQueryService,
+        ILogger<RedisWindowSubscriber> logger,
+        int retryDelayMs)
+    {
+        this.redis = redis;
+        this.sseService = sseService;
+        this.dbQueryService = dbQueryService;
+        this.logger = logger;
+        this.retryDelayMs = retryDelayMs;
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var subscriber = redis.GetSubscriber();
+        bool subscribed = false;
 
-        await subscriber.SubscribeAsync(WindowsChannel, async (_, value) =>
+        while (!stoppingToken.IsCancellationRequested && !subscribed)
         {
-            if (value.IsNullOrEmpty)
+            try
+            {
+                await subscriber.SubscribeAsync(WindowsChannel, async (_, value) =>
+                {
+                    if (value.IsNullOrEmpty)
+                    {
+                        return;
+                    }
+
+                    try
+                    {
+                        var record = JsonSerializer.Deserialize<FinalizedWindowRecord>(value.ToString(), JsonOptions);
+                        if (record is null)
+                        {
+                            return;
+                        }
+
+                        dbQueryService.RecordLiveSymbol(record.SymbolId, record.WindowEnd);
+                        await sseService.BroadcastWindowUpdate(record);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(ex, "Failed to process Redis finalized window message");
+                    }
+                });
+
+                await subscriber.SubscribeAsync(ResetChannel, async (_, _) =>
+                {
+                    try
+                    {
+                        dbQueryService.ClearLiveSymbols();
+                        await sseService.BroadcastEvent("reset", new { cleared = true, time = DateTime.UtcNow });
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(ex, "Failed to process Redis system reset message");
+                    }
+                });
+
+                subscribed = true;
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 return;
             }
-
-            try
+            catch (Exception ex)
             {
-                var record = JsonSerializer.Deserialize<FinalizedWindowRecord>(value.ToString(), JsonOptions);
-                if (record is null)
+                logger.LogWarning(ex, "Redis subscription failed; retrying in {DelayMs}ms", retryDelayMs);
+                try
+                {
+                    await subscriber.UnsubscribeAllAsync();
+                }
+                catch
+                {
+                }
+
+                try
+                {
+                    await Task.Delay(retryDelayMs, stoppingToken);
+                }
+                catch (OperationCanceledException)
                 {
                     return;
                 }
-
-                dbQueryService.RecordLiveSymbol(record.SymbolId, record.WindowEnd);
-                await sseService.BroadcastWindowUpdate(record);
             }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "Failed to process Redis finalized window message");
-            }
-        });
+        }
 
-        await subscriber.SubscribeAsync(ResetChannel, async (_, _) =>
+        if (!subscribed)
         {
-            try
-            {
-                dbQueryService.ClearLiveSymbols();
-                await sseService.BroadcastEvent("reset", new { cleared = true, time = DateTime.UtcNow });
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "Failed to process Redis system reset message");
-            }
-        });
+            return;
+        }
 
         try
         {

@@ -32,6 +32,8 @@ public class DbBatchWriter(
         });
     private readonly List<FinalizedWindowRecord> buffer = new(Constants.DbBatchMaxCapacity);
     private readonly object bufferLock = new();
+    private readonly SemaphoreSlim flushLock = new(1, 1);
+    private CancellationTokenSource flushCts = new();
     private long clearGeneration;
 
     public void Enqueue(FinalizedWindowRecord record)
@@ -45,10 +47,28 @@ public class DbBatchWriter(
         {
         }
 
+        CancellationTokenSource oldCts;
         lock (bufferLock)
         {
             buffer.Clear();
             clearGeneration++;
+            oldCts = flushCts;
+            flushCts = new CancellationTokenSource();
+        }
+
+        oldCts.Cancel();
+        flushLock.Wait();
+        try
+        {
+            lock (bufferLock)
+            {
+                buffer.Clear();
+            }
+        }
+        finally
+        {
+            flushLock.Release();
+            oldCts.Dispose();
         }
     }
 
@@ -175,65 +195,81 @@ public class DbBatchWriter(
 
     private async Task<bool> FlushBatch(string connectionString, CancellationToken ct)
     {
-        List<FinalizedWindowRecord> snapshot;
-        long gen;
-
-        lock (bufferLock)
-        {
-            if (buffer.Count == 0)
-            {
-                return true;
-            }
-
-            int count = Math.Min(buffer.Count, maxBatchSize);
-            snapshot = buffer.GetRange(0, count);
-            gen = clearGeneration;
-        }
-
+        await flushLock.WaitAsync(ct);
         try
         {
-            await using var connection = new NpgsqlConnection(connectionString);
-            await connection.OpenAsync(ct);
-
-            await using var cmd = new NpgsqlCommand { Connection = connection };
-            var sql = new StringBuilder();
-            sql.AppendLine("INSERT INTO trading_windows (symbol_id, window_start, window_end, ema_38, ema_100, last_price, buy_signal, sell_signal) VALUES ");
-
-            for (int i = 0; i < snapshot.Count; i++)
-            {
-                var r = snapshot[i];
-                if (i > 0) sql.Append(", ");
-                sql.Append($"(@s{i}, @ws{i}, @we{i}, @e38_{i}, @e100_{i}, @p{i}, @b{i}, @sell{i})");
-
-                cmd.Parameters.AddWithValue($"@s{i}", r.SymbolId);
-                cmd.Parameters.AddWithValue($"@ws{i}", r.WindowStart);
-                cmd.Parameters.AddWithValue($"@we{i}", r.WindowEnd);
-                cmd.Parameters.AddWithValue($"@e38_{i}", r.Ema38);
-                cmd.Parameters.AddWithValue($"@e100_{i}", r.Ema100);
-                cmd.Parameters.AddWithValue($"@p{i}", r.LastPrice);
-                cmd.Parameters.AddWithValue($"@b{i}", r.BuySignal);
-                cmd.Parameters.AddWithValue($"@sell{i}", r.SellSignal);
-            }
-
-            sql.AppendLine(" ON CONFLICT (symbol_id, window_start) DO UPDATE SET window_end = EXCLUDED.window_end, ema_38 = EXCLUDED.ema_38, ema_100 = EXCLUDED.ema_100, last_price = EXCLUDED.last_price, buy_signal = EXCLUDED.buy_signal, sell_signal = EXCLUDED.sell_signal;");
-            cmd.CommandText = sql.ToString();
-
-            await cmd.ExecuteNonQueryAsync(ct);
+            List<FinalizedWindowRecord> snapshot;
+            CancellationToken flushToken;
+            long gen;
 
             lock (bufferLock)
             {
-                if (gen == clearGeneration && buffer.Count >= snapshot.Count)
+                if (buffer.Count == 0)
                 {
-                    buffer.RemoveRange(0, snapshot.Count);
+                    return true;
                 }
+
+                int count = Math.Min(buffer.Count, maxBatchSize);
+                snapshot = buffer.GetRange(0, count);
+                gen = clearGeneration;
+                flushToken = flushCts.Token;
             }
 
-            return true;
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, flushToken);
+
+            try
+            {
+                await using var connection = new NpgsqlConnection(connectionString);
+                await connection.OpenAsync(linkedCts.Token);
+
+                await using var cmd = new NpgsqlCommand { Connection = connection };
+                var sql = new StringBuilder();
+                sql.AppendLine("INSERT INTO trading_windows (symbol_id, window_start, window_end, ema_38, ema_100, last_price, buy_signal, sell_signal) VALUES ");
+
+                for (int i = 0; i < snapshot.Count; i++)
+                {
+                    var r = snapshot[i];
+                    if (i > 0) sql.Append(", ");
+                    sql.Append($"(@s{i}, @ws{i}, @we{i}, @e38_{i}, @e100_{i}, @p{i}, @b{i}, @sell{i})");
+
+                    cmd.Parameters.AddWithValue($"@s{i}", r.SymbolId);
+                    cmd.Parameters.AddWithValue($"@ws{i}", r.WindowStart);
+                    cmd.Parameters.AddWithValue($"@we{i}", r.WindowEnd);
+                    cmd.Parameters.AddWithValue($"@e38_{i}", r.Ema38);
+                    cmd.Parameters.AddWithValue($"@e100_{i}", r.Ema100);
+                    cmd.Parameters.AddWithValue($"@p{i}", r.LastPrice);
+                    cmd.Parameters.AddWithValue($"@b{i}", r.BuySignal);
+                    cmd.Parameters.AddWithValue($"@sell{i}", r.SellSignal);
+                }
+
+                sql.AppendLine(" ON CONFLICT (symbol_id, window_start) DO UPDATE SET window_end = EXCLUDED.window_end, ema_38 = EXCLUDED.ema_38, ema_100 = EXCLUDED.ema_100, last_price = EXCLUDED.last_price, buy_signal = EXCLUDED.buy_signal, sell_signal = EXCLUDED.sell_signal;");
+                cmd.CommandText = sql.ToString();
+
+                await cmd.ExecuteNonQueryAsync(linkedCts.Token);
+
+                lock (bufferLock)
+                {
+                    if (gen == clearGeneration && buffer.Count >= snapshot.Count)
+                    {
+                        buffer.RemoveRange(0, snapshot.Count);
+                    }
+                }
+
+                return true;
+            }
+            catch (OperationCanceledException) when (flushToken.IsCancellationRequested && !ct.IsCancellationRequested)
+            {
+                return true;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to flush batch of {Count} records to database. Will retry next cycle.", snapshot.Count);
+                return false;
+            }
         }
-        catch (Exception ex)
+        finally
         {
-            logger.LogWarning(ex, "Failed to flush batch of {Count} records to database. Will retry next cycle.", snapshot.Count);
-            return false;
+            flushLock.Release();
         }
     }
 }

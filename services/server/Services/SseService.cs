@@ -36,6 +36,9 @@ public class SseService(ILogger<SseService> logger) : ISseService
 
     private readonly ConcurrentDictionary<string, ClientConnection> connections = new();
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, string>> subscriptions = new();
+    private readonly ConcurrentDictionary<string, object> clientLocks = new();
+
+    private object GetClientLock(string clientId) => clientLocks.GetOrAdd(clientId, _ => new object());
 
     public int ActiveConnectionCount => connections.Count;
 
@@ -53,7 +56,11 @@ public class SseService(ILogger<SseService> logger) : ISseService
             CancellationToken = ct
         };
 
-        connections[clientId] = connection;
+        lock (GetClientLock(clientId))
+        {
+            connections[clientId] = connection;
+        }
+
         logger.LogInformation("SSE Client {ClientId} connected. Active connections: {Count}", clientId, connections.Count);
 
         try
@@ -66,8 +73,15 @@ public class SseService(ILogger<SseService> logger) : ISseService
         }
         finally
         {
-            connections.TryRemove(new KeyValuePair<string, ClientConnection>(clientId, connection));
-            subscriptions.TryRemove(clientId, out _);
+            lock (GetClientLock(clientId))
+            {
+                if (connections.TryGetValue(clientId, out var current) && ReferenceEquals(current, connection))
+                {
+                    connections.TryRemove(clientId, out _);
+                    subscriptions.TryRemove(clientId, out _);
+                }
+            }
+
             logger.LogInformation("SSE Client {ClientId} disconnected. Active connections: {Count}", clientId, connections.Count);
         }
     }

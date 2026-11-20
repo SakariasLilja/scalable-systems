@@ -13,6 +13,7 @@ public static class Constants
 
     public const string RedisWindowsChannel = "ema:windows";
     public const string RedisResetChannel = "system:reset";
+    public const int RedisSubscribeRetryDelayMs = 2000;
 
     public const int IngestChannelCapacity = 100000;
     public const int DbWriterChannelCapacity = 50000;

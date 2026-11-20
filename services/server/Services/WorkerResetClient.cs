@@ -4,7 +4,7 @@ namespace Trading.Server.Services;
 
 public interface IWorkerResetClient
 {
-    Task ResetWorkerAsync(CancellationToken ct = default);
+    Task<bool> ResetWorkerAsync(CancellationToken ct = default);
 }
 
 public class WorkerResetClient(
@@ -12,7 +12,7 @@ public class WorkerResetClient(
     ILogger<WorkerResetClient> logger
 ) : IWorkerResetClient
 {
-    public async Task ResetWorkerAsync(CancellationToken ct = default)
+    public async Task<bool> ResetWorkerAsync(CancellationToken ct = default)
     {
         try
         {
@@ -21,11 +21,15 @@ public class WorkerResetClient(
             if (!response.IsSuccessStatusCode)
             {
                 logger.LogWarning("Worker reset endpoint returned status {StatusCode}", response.StatusCode);
+                return false;
             }
+
+            return true;
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Failed to call Worker internal reset endpoint");
+            return false;
         }
     }
 }
