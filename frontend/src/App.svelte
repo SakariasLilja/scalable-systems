@@ -1,19 +1,21 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import SearchBar from './components/SearchBar.svelte';
-  import SimulatorControls from './components/SimulatorControls.svelte';
+  import SystemStatusBar from './components/SystemStatusBar.svelte';
   import TrackedList from './components/TrackedList.svelte';
   import ActiveChartModal from './components/ActiveChartModal.svelte';
   import {
     get_or_create_client_id,
     connect_sse,
-    set_symbol_state
+    set_symbol_state,
+    get_system_status
   } from './lib/sse_service.js';
   import {
     default_tracked_symbols,
     subscription_states,
     alert_dismiss_timeout_ms,
-    tracked_symbols_storage_key
+    tracked_symbols_storage_key,
+    status_poll_interval_ms
   } from './constants.js';
 
   function load_initial_tracked_symbols() {
@@ -42,6 +44,34 @@
   let active_modal_symbol = null;
   let latest_active_tick = null;
   let alert_timers = {};
+  let is_sse_connected = false;
+  let latest_sim_time = null;
+  let known_symbol_count = 0;
+  let reset_counter = 0;
+  let status_timer = null;
+
+  async function refresh_system_status() {
+    const status = await get_system_status();
+    if (status) {
+      known_symbol_count = status.knownSymbols || 0;
+      if (status.latestSimulationTime) {
+        latest_sim_time = status.latestSimulationTime;
+      }
+    }
+  }
+
+  function reset_client_state() {
+    Object.values(alert_timers).forEach(clearTimeout);
+    alert_timers = {};
+    symbol_data = {};
+    tracked_symbols = [];
+    save_tracked_symbols([]);
+    active_modal_symbol = null;
+    latest_active_tick = null;
+    latest_sim_time = null;
+    known_symbol_count = 0;
+    reset_counter += 1;
+  }
 
   async function re_register_subscriptions() {
     if (!client_id) return;
@@ -55,13 +85,30 @@
   }
 
   function handle_sse_event(event_type, payload) {
+    if (event_type === 'open') {
+      is_sse_connected = true;
+      return;
+    }
+
+    if (event_type === 'error') {
+      is_sse_connected = false;
+      return;
+    }
+
     if (event_type === 'connected') {
+      is_sse_connected = true;
       re_register_subscriptions();
       return;
     }
 
+    if (event_type === 'reset') {
+      reset_client_state();
+      return;
+    }
+
     if (event_type === 'advisory_alert') {
-      const { symbol, type, closePrice, ema38, ema100 } = payload;
+      const { symbol, type, closePrice, ema38, ema100, time } = payload;
+      if (time) latest_sim_time = time;
       symbol_data[symbol] = {
         ...(symbol_data[symbol] || {}),
         price: closePrice,
@@ -87,7 +134,8 @@
         delete alert_timers[symbol];
       }, alert_dismiss_timeout_ms);
     } else if (event_type === 'active_update') {
-      const { symbol, closePrice, ema38, ema100 } = payload;
+      const { symbol, closePrice, ema38, ema100, time } = payload;
+      if (time) latest_sim_time = time;
       symbol_data[symbol] = {
         ...(symbol_data[symbol] || {}),
         price: closePrice,
@@ -100,7 +148,8 @@
         latest_active_tick = payload;
       }
     } else if (event_type === 'tracked_update') {
-      const { symbol, price } = payload;
+      const { symbol, price, time } = payload;
+      if (time) latest_sim_time = time;
       symbol_data[symbol] = {
         ...(symbol_data[symbol] || {}),
         price: price
@@ -149,11 +198,16 @@
   onMount(() => {
     client_id = get_or_create_client_id();
     event_source = connect_sse(client_id, handle_sse_event);
+    refresh_system_status();
+    status_timer = setInterval(refresh_system_status, status_poll_interval_ms);
   });
 
   onDestroy(() => {
     if (event_source) {
       event_source.close();
+    }
+    if (status_timer) {
+      clearInterval(status_timer);
     }
     Object.values(alert_timers).forEach(clearTimeout);
   });
@@ -168,8 +222,13 @@
   </header>
 
   <div class="content-wrapper">
-    <SimulatorControls />
-    <SearchBar on:add_symbol={handle_add_symbol} />
+    <SystemStatusBar
+      is_connected={is_sse_connected}
+      {latest_sim_time}
+      {known_symbol_count}
+      on:db_cleared={reset_client_state}
+    />
+    <SearchBar {reset_counter} on:add_symbol={handle_add_symbol} />
     <TrackedList
       {tracked_symbols}
       {symbol_data}

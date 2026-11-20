@@ -3,6 +3,8 @@
   import { search_symbols } from '../lib/sse_service.js';
   import { search_debounce_ms, default_symbol_search_limit } from '../constants.js';
 
+  export let reset_counter = 0;
+
   const dispatch = createEventDispatcher();
 
   let search_input = '';
@@ -12,6 +14,18 @@
   let debounce_timer = null;
   let container_ref = null;
   let search_seq = 0;
+
+  $: if (reset_counter > 0) {
+    if (debounce_timer) {
+      clearTimeout(debounce_timer);
+      debounce_timer = null;
+    }
+    search_seq += 1;
+    search_input = '';
+    suggestions = [];
+    is_open = false;
+    highlighted_index = -1;
+  }
 
   async function fetch_suggestions(query) {
     const seq = ++search_seq;
