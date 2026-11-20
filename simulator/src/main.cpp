@@ -309,8 +309,12 @@ int run_stream_mode(const CliOptions& opts,
         stats.sim_elapsed_ms.store(completed_days_sim_ms, std::memory_order_relaxed);
     }
 
-    pool.wait_idle();
-    pool.shutdown_and_join();
+    if (g_stop_requested.load(std::memory_order_relaxed)) {
+        pool.stop_and_join();
+    } else {
+        pool.wait_idle();
+        pool.shutdown_and_join();
+    }
 
     {
         std::lock_guard<std::mutex> lock(stats_mu);
@@ -363,8 +367,12 @@ int run_probe_mode(const CliOptions& opts,
         in.open(path, std::ios::binary);
         if (!in.is_open()) {
             std::cerr << "Failed to open CSV file: " << path << "\n";
-            pool.wait_idle();
-            pool.shutdown_and_join();
+            if (g_stop_requested.load(std::memory_order_relaxed)) {
+                pool.stop_and_join();
+            } else {
+                pool.wait_idle();
+                pool.shutdown_and_join();
+            }
             return 1;
         }
 
@@ -429,7 +437,9 @@ int run_probe_mode(const CliOptions& opts,
             }
         }
 
-        pool.wait_idle();
+        if (!g_stop_requested.load(std::memory_order_relaxed)) {
+            pool.wait_idle();
+        }
         auto day_end_tp = std::chrono::steady_clock::now();
 
         {
@@ -466,7 +476,11 @@ int run_probe_mode(const CliOptions& opts,
                   << " speedup=" << std::setprecision(2) << speedup << "x\n";
     }
 
-    pool.shutdown_and_join();
+    if (g_stop_requested.load(std::memory_order_relaxed)) {
+        pool.stop_and_join();
+    } else {
+        pool.shutdown_and_join();
+    }
 
     if (probed_days == 0) {
         std::cerr << "No trading days probed.\n";

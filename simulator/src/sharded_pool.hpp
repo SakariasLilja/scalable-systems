@@ -94,8 +94,17 @@ public:
     void wait_idle() {
         std::unique_lock<std::mutex> lock(idle_mu_);
         idle_cv_.wait(lock, [&]() {
-            return pending_count_.load(std::memory_order_acquire) == 0;
+            return pending_count_.load(std::memory_order_acquire) == 0 || is_stopped();
         });
+    }
+
+    void stop_and_join() {
+        force_stop_.store(true, std::memory_order_relaxed);
+        {
+            std::lock_guard<std::mutex> lock(idle_mu_);
+            idle_cv_.notify_all();
+        }
+        shutdown_and_join();
     }
 
     void shutdown_and_join() {
@@ -134,11 +143,12 @@ private:
     };
 
     bool is_stopped() const {
-        return stop_flag_ != nullptr && stop_flag_->load(std::memory_order_relaxed);
+        return force_stop_.load(std::memory_order_relaxed) ||
+               (stop_flag_ != nullptr && stop_flag_->load(std::memory_order_relaxed));
     }
 
-    void finish_one_item() {
-        if (pending_count_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+    void finish_items(std::size_t count) {
+        if (pending_count_.fetch_sub(count, std::memory_order_acq_rel) == count) {
             std::lock_guard<std::mutex> lock(idle_mu_);
             idle_cv_.notify_all();
         }
@@ -153,8 +163,18 @@ private:
             {
                 std::unique_lock<std::mutex> lock(shard.mu);
                 shard.cv_not_empty.wait(lock, [&]() {
-                    return !shard.items.empty() || shard.closed;
+                    return !shard.items.empty() || shard.closed || is_stopped();
                 });
+                if (is_stopped()) {
+                    std::size_t dropped = shard.items.size();
+                    shard.items.clear();
+                    shard.cv_not_full.notify_all();
+                    lock.unlock();
+                    if (dropped > 0) {
+                        finish_items(dropped);
+                    }
+                    break;
+                }
                 if (shard.items.empty() && shard.closed) {
                     break;
                 }
@@ -167,33 +187,16 @@ private:
             HttpPostResult res = sender.post_json(payload);
             if (res.ok) {
                 ticks_sent_.fetch_add(1, std::memory_order_relaxed);
-                finish_one_item();
             } else {
                 http_errors_.fetch_add(1, std::memory_order_relaxed);
-                finish_one_item();
-                if (is_stopped()) {
-                    std::size_t dropped = 0;
-                    {
-                        std::lock_guard<std::mutex> lock(shard.mu);
-                        dropped = shard.items.size();
-                        shard.items.clear();
-                        shard.cv_not_full.notify_all();
-                    }
-                    if (dropped > 0) {
-                        if (pending_count_.fetch_sub(dropped, std::memory_order_acq_rel) ==
-                            dropped) {
-                            std::lock_guard<std::mutex> lock(idle_mu_);
-                            idle_cv_.notify_all();
-                        }
-                    }
-                    break;
-                }
             }
+            finish_items(1);
         }
     }
 
     HttpUrl target_url_;
     const std::atomic<bool>* stop_flag_{nullptr};
+    std::atomic<bool> force_stop_{false};
     std::vector<std::unique_ptr<ShardQueue>> shards_;
     std::vector<std::thread> workers_;
     std::atomic<uint64_t> ticks_sent_{0};

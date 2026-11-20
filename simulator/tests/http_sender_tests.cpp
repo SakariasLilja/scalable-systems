@@ -366,6 +366,94 @@ void test_sim_time_tracker_monotonic_high_water() {
     CHECK(tracker.elapsed_sim_ms() == 500);
 }
 
+void test_sharded_pool_stops_promptly_when_stop_flag_set() {
+    int listen_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    CHECK(listen_fd >= 0);
+
+    int opt = 1;
+    CHECK(::setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == 0);
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = 0;
+    CHECK(::bind(listen_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0);
+    CHECK(::listen(listen_fd, 8) == 0);
+
+    sockaddr_in bound{};
+    socklen_t bound_len = sizeof(bound);
+    CHECK(::getsockname(listen_fd, reinterpret_cast<sockaddr*>(&bound), &bound_len) == 0);
+    uint16_t port = ntohs(bound.sin_port);
+
+    std::atomic<bool> stop_server{false};
+    std::vector<std::thread> conn_threads;
+
+    std::thread accept_thread([&]() {
+        while (!stop_server.load(std::memory_order_relaxed)) {
+            int c = ::accept(listen_fd, nullptr, nullptr);
+            if (c < 0) {
+                break;
+            }
+            conn_threads.emplace_back([c, &stop_server]() {
+                std::string carry;
+                while (!stop_server.load(std::memory_order_relaxed)) {
+                    std::string body;
+                    std::string headers;
+                    if (!read_exact_http_request(c, carry, body, headers)) {
+                        break;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                    std::string resp =
+                        "HTTP/1.1 202 Accepted\r\n"
+                        "Content-Length: 0\r\n"
+                        "Connection: keep-alive\r\n\r\n";
+                    if (!send_all_raw(c, resp)) {
+                        break;
+                    }
+                }
+                ::close(c);
+            });
+        }
+    });
+
+    auto url = sim::parse_http_url("http://127.0.0.1:" + std::to_string(port) + "/api/ingest");
+    CHECK(url.has_value());
+
+    std::atomic<bool> stop_flag{false};
+    {
+        sim::ShardedPool pool(2, *url, &stop_flag);
+        for (int i = 0; i < 100; ++i) {
+            std::string sym = "SYM_" + std::to_string(i);
+            std::string payload = "{\"i\":" + std::to_string(i) + "}";
+            CHECK(pool.push(sym, std::move(payload)));
+        }
+
+        while (pool.ticks_sent() < 2) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+
+        auto t0 = std::chrono::steady_clock::now();
+        stop_flag.store(true, std::memory_order_relaxed);
+        pool.stop_and_join();
+        auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                              std::chrono::steady_clock::now() - t0)
+                              .count();
+
+        CHECK(elapsed_ms < 500);
+        CHECK(pool.ticks_sent() < 20);
+    }
+
+    stop_server.store(true, std::memory_order_relaxed);
+    ::shutdown(listen_fd, SHUT_RDWR);
+    ::close(listen_fd);
+    accept_thread.join();
+    for (auto& t : conn_threads) {
+        if (t.joinable()) {
+            t.join();
+        }
+    }
+}
+
 int main() {
     std::signal(SIGPIPE, SIG_IGN);
     test_parse_http_url_handles_default_and_explicit_ports();
@@ -373,6 +461,7 @@ int main() {
     test_http_sender_handles_chunked_response();
     test_sharded_pool_wait_idle_waits_for_http_delivery();
     test_sim_time_tracker_monotonic_high_water();
+    test_sharded_pool_stops_promptly_when_stop_flag_set();
     std::cout << "All HTTP sender tests passed.\n";
     return 0;
 }
