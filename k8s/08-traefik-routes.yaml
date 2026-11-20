@@ -1,0 +1,32 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: trading-routes
+  namespace: trading-system
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: PathPrefix(`/api/ingest`)
+      kind: Rule
+      priority: 20
+      services:
+        - kind: Service
+          name: worker
+          port: 8080
+    - match: PathPrefix(`/`)
+      kind: Rule
+      priority: 10
+      services:
+        - kind: Service
+          name: server
+          port: 8080
+          strategy: p2c
+          sticky:
+            cookie:
+              name: trading_session
+              httpOnly: true
+              secure: false
+              sameSite: lax
+          responseForwarding:
+            flushInterval: "-1"

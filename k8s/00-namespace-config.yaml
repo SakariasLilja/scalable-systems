@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: trading-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trading-config
+  namespace: trading-system
+data:
+  REDIS_CONNECTION: "redis:6379"
+  WORKER_URL: "http://worker:8080"
+  POSTGRES_HOST: "timescaledb"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "trading_db"
+  ASPNETCORE_URLS: "http://+:8080"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: trading-secrets
+  namespace: trading-system
+type: Opaque
+stringData:
+  POSTGRES_USER: "postgres"
+  POSTGRES_PASSWORD: "postgres_password"
+  POSTGRES_DB: "trading_db"
+  ConnectionStrings__TimescaleDb: "Host=timescaledb;Port=5432;Database=trading_db;Username=postgres;Password=postgres_password;Timeout=5;Command Timeout=10"
