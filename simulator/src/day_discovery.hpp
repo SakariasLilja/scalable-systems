@@ -130,12 +130,11 @@ inline std::vector<std::string> discover_trading_days(const std::string& data_di
 
     if (!start_day.empty()) {
         auto start_key = detail::parse_day_key(start_day);
+        if (!start_key.has_value()) {
+            return result;
+        }
         for (const auto& entry : entries) {
-            if (start_key.has_value()) {
-                if (entry.key.has_value() && *entry.key >= *start_key) {
-                    result.push_back(entry.path);
-                }
-            } else if (entry.filename >= start_day) {
+            if (entry.key.has_value() && *entry.key >= *start_key) {
                 result.push_back(entry.path);
             }
         }

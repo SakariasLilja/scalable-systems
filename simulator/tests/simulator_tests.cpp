@@ -53,6 +53,12 @@ void test_discover_trading_days_chronological_and_filters_zone_identifier() {
     assert(fs::path(from_start[0]).filename() == "debs2022-gc-trading-day-30-11-21.csv");
     assert(fs::path(from_start[1]).filename() == "debs2022-gc-trading-day-01-12-21.csv");
 
+    auto invalid_start = sim::discover_trading_days(dir.string(), "", "99-99-99");
+    assert(invalid_start.empty());
+
+    auto full_year_start = sim::discover_trading_days(dir.string(), "", "08-11-2021");
+    assert(full_year_start.empty());
+
     fs::remove_all(dir);
 }
 
@@ -165,6 +171,16 @@ void test_timestamp_pacer_handles_colons_and_caps_day_transition_gap() {
     pacer.reset();
     assert(pacer.compute_delay_ms(t1, 0.0) == 0);
     assert(pacer.compute_delay_ms(t2, 0.0) == 0);
+
+    auto t_interleave_hi = sim::TimestampPacer::parse_epoch_ms("08-11-2021", "05:10:04.000");
+    auto t_interleave_zero = sim::TimestampPacer::parse_epoch_ms("08-11-2021", "00:00:00.000");
+    auto t_interleave_next = sim::TimestampPacer::parse_epoch_ms("08-11-2021", "05:10:04.500");
+    assert(t_interleave_hi.has_value() && t_interleave_zero.has_value() && t_interleave_next.has_value());
+
+    pacer.reset();
+    assert(pacer.compute_delay_ms(t_interleave_hi, 1.0) == 0);
+    assert(pacer.compute_delay_ms(t_interleave_zero, 1.0) == 0);
+    assert(pacer.compute_delay_ms(t_interleave_next, 1.0) == 500);
 }
 
 int main() {

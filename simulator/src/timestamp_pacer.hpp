@@ -114,9 +114,12 @@ public:
         }
 
         int64_t delta = current - *prev_epoch_ms_;
+        if (delta <= 0) {
+            return 0;
+        }
         prev_epoch_ms_ = current;
 
-        if (delta <= 0 || speed_factor <= 0.0 || !std::isfinite(speed_factor)) {
+        if (speed_factor <= 0.0 || !std::isfinite(speed_factor)) {
             return 0;
         }
 
