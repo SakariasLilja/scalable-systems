@@ -218,10 +218,14 @@ static void test_burst_tracker() {
     CHECK(tracker.peak_count() == 7);
     CHECK(tracker.peak_bucket_start_ms() == 20000);
 
+    tracker.record(27000);
+    CHECK(tracker.peak_count() == 8);
+    CHECK(tracker.peak_bucket_start_ms() == 20000);
+
     tracker.record(30000);
     tracker.record(35000);
-    CHECK(tracker.peak_count() == 7);
-    CHECK(std::abs(tracker.peak_rows_per_sim_sec() - 0.7) < 1e-9);
+    CHECK(tracker.peak_count() == 8);
+    CHECK(std::abs(tracker.peak_rows_per_sim_sec() - 0.8) < 1e-9);
 
     CHECK(std::abs(sim::compute_maintainable_speedup(70000.0, 700.0) - 100.0) < 1e-9);
     CHECK(sim::compute_maintainable_speedup(70000.0, 0.0) == 0.0);

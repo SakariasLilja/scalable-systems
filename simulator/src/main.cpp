@@ -155,7 +155,8 @@ bool parse_args(int argc, char* argv[], CliOptions& opts, std::string& err_msg) 
             try {
                 std::size_t pos = 0;
                 int64_t s = std::stoll(val, &pos);
-                if (pos != val.size() || s <= 0) {
+                if (pos != val.size() || s <= 0 ||
+                    s > std::numeric_limits<int64_t>::max() / sim::MS_PER_SECOND) {
                     err_msg = "Invalid --bucket-sec value: " + val;
                     return false;
                 }
@@ -183,6 +184,10 @@ bool parse_args(int argc, char* argv[], CliOptions& opts, std::string& err_msg) 
             err_msg = "Unknown option: " + std::string(arg);
             return false;
         }
+    }
+    if (opts.offline && !opts.probe) {
+        err_msg = "--offline requires --probe";
+        return false;
     }
     return true;
 }
@@ -537,6 +542,7 @@ int run_offline_probe_mode(const CliOptions& opts, const std::vector<std::string
     std::string worst_primary_file;
     std::string worst_strict_file;
     std::size_t probed_days = 0;
+    std::size_t open_failures = 0;
 
     std::vector<char> io_buf(sim::FILE_STREAM_BUFFER_BYTES);
 
@@ -544,12 +550,14 @@ int run_offline_probe_mode(const CliOptions& opts, const std::vector<std::string
         if (g_stop_requested.load(std::memory_order_relaxed)) {
             break;
         }
-        std::ifstream in(path, std::ios::in | std::ios::binary);
+        std::ifstream in;
+        in.rdbuf()->pubsetbuf(io_buf.data(), static_cast<std::streamsize>(io_buf.size()));
+        in.open(path, std::ios::in | std::ios::binary);
         if (!in.is_open()) {
             std::cerr << "Failed to open CSV file: " << path << "\n";
+            ++open_failures;
             continue;
         }
-        in.rdbuf()->pubsetbuf(io_buf.data(), static_cast<std::streamsize>(io_buf.size()));
 
         std::string filename = std::filesystem::path(path).filename().string();
         sim::BurstTracker primary_tracker(primary_bucket_ms);
@@ -625,7 +633,7 @@ int run_offline_probe_mode(const CliOptions& opts, const std::vector<std::string
     std::cout << std::fixed << std::setprecision(2)
               << "[offline-probe-summary] days=" << probed_days
               << " total_rows=" << total_rows
-              << " json_mb=" << (static_cast<double>(total_json_bytes) / (1024.0 * 1024.0))
+              << " json_mb=" << (static_cast<double>(total_json_bytes) / sim::BYTES_PER_MIB)
               << " wall=" << total_wall_sec << "s"
               << " reader_rows/s=" << std::setprecision(1) << overall_reader_rps
               << " worst_" << opts.bucket_sec << "s=" << worst_primary_sim_rps << "/s(" << worst_primary_file << ")"
@@ -633,7 +641,7 @@ int run_offline_probe_mode(const CliOptions& opts, const std::vector<std::string
               << " maintainable_" << opts.bucket_sec << "s=" << std::setprecision(2) << week_maint_primary << "x"
               << " maintainable_1s=" << week_maint_strict << "x\n";
 
-    return 0;
+    return open_failures > 0 ? 1 : 0;
 }
 
 }  // namespace

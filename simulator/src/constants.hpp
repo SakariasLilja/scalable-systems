@@ -22,6 +22,7 @@ inline constexpr int64_t STATS_INTERVAL_SECONDS = 2;
 inline constexpr int64_t QUEUE_POLL_TIMEOUT_MS = 50;
 inline constexpr int64_t SLEEP_SLICE_MS = 100;
 inline constexpr std::size_t FILE_STREAM_BUFFER_BYTES = 1024 * 1024;
+inline constexpr double BYTES_PER_MIB = 1024.0 * 1024.0;
 
 inline constexpr int64_t HTTP_IO_TIMEOUT_SEC = 10;
 inline constexpr std::size_t MAX_HTTP_HEADER_BYTES = 16384;
