@@ -11,6 +11,10 @@ worktrees/
 node_modules/
 dist/
 simulator/build/
+*.drawio
+*.drawio.svg
+*Zone.Identifier
+.vscode/
 
 # =========================
 # .NET Build and Publish
