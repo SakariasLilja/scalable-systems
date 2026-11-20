@@ -4,14 +4,11 @@
 #include <condition_variable>
 #include <csignal>
 #include <cstdint>
-#include <deque>
 #include <filesystem>
 #include <fstream>
-#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <limits>
-#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -23,6 +20,7 @@
 #include "csv_json.hpp"
 #include "day_discovery.hpp"
 #include "http_sender.hpp"
+#include "sharded_pool.hpp"
 #include "timestamp_pacer.hpp"
 
 namespace {
@@ -163,158 +161,6 @@ bool parse_args(int argc, char* argv[], CliOptions& opts, std::string& err_msg) 
     return true;
 }
 
-struct ShardQueue {
-    std::mutex mu;
-    std::condition_variable cv_not_empty;
-    std::condition_variable cv_not_full;
-    std::deque<std::string> items;
-    bool closed = false;
-};
-
-class ShardedWorkerPool {
-public:
-    ShardedWorkerPool(int concurrency, const sim::HttpUrl& target_url)
-        : target_url_(target_url) {
-        shards_.reserve(static_cast<std::size_t>(concurrency));
-        for (int i = 0; i < concurrency; ++i) {
-            shards_.push_back(std::make_unique<ShardQueue>());
-        }
-        workers_.reserve(static_cast<std::size_t>(concurrency));
-        for (int i = 0; i < concurrency; ++i) {
-            workers_.emplace_back(&ShardedWorkerPool::worker_loop, this, i);
-        }
-    }
-
-    ~ShardedWorkerPool() {
-        shutdown_and_join();
-    }
-
-    ShardedWorkerPool(const ShardedWorkerPool&) = delete;
-    ShardedWorkerPool& operator=(const ShardedWorkerPool&) = delete;
-
-    bool push(const std::string& symbol_id, std::string&& json_payload) {
-        std::size_t idx = std::hash<std::string>{}(symbol_id) % shards_.size();
-        ShardQueue& shard = *shards_[idx];
-        std::unique_lock<std::mutex> lock(shard.mu);
-        while (shard.items.size() >= sim::MAX_SHARD_QUEUE_SIZE && !shard.closed &&
-               !g_stop_requested.load(std::memory_order_relaxed)) {
-            shard.cv_not_full.wait_for(
-                lock, std::chrono::milliseconds(sim::QUEUE_POLL_TIMEOUT_MS));
-        }
-        if (shard.closed || g_stop_requested.load(std::memory_order_relaxed)) {
-            return false;
-        }
-        shard.items.push_back(std::move(json_payload));
-        lock.unlock();
-        shard.cv_not_empty.notify_one();
-        return true;
-    }
-
-    void shutdown_and_join() {
-        if (joined_) {
-            return;
-        }
-        for (auto& shard : shards_) {
-            std::lock_guard<std::mutex> lock(shard->mu);
-            shard->closed = true;
-            shard->cv_not_empty.notify_all();
-            shard->cv_not_full.notify_all();
-        }
-        for (auto& t : workers_) {
-            if (t.joinable()) {
-                t.join();
-            }
-        }
-        joined_ = true;
-    }
-
-    uint64_t ticks_sent() const {
-        return ticks_sent_.load(std::memory_order_relaxed);
-    }
-
-    uint64_t http_errors() const {
-        return http_errors_.load(std::memory_order_relaxed);
-    }
-
-private:
-    void worker_loop(int shard_index) {
-        ShardQueue& shard = *shards_[static_cast<std::size_t>(shard_index)];
-        sim::HttpKeepAliveSender sender(target_url_);
-
-        while (true) {
-            std::string payload;
-            {
-                std::unique_lock<std::mutex> lock(shard.mu);
-                shard.cv_not_empty.wait(lock, [&]() {
-                    return !shard.items.empty() || shard.closed;
-                });
-                if (shard.items.empty() && shard.closed) {
-                    break;
-                }
-                payload = std::move(shard.items.front());
-                shard.items.pop_front();
-                lock.unlock();
-                shard.cv_not_full.notify_one();
-            }
-
-            sim::HttpPostResult res = sender.post_json(payload);
-            if (res.ok) {
-                ticks_sent_.fetch_add(1, std::memory_order_relaxed);
-            } else {
-                http_errors_.fetch_add(1, std::memory_order_relaxed);
-                if (g_stop_requested.load(std::memory_order_relaxed)) {
-                    break;
-                }
-            }
-        }
-    }
-
-    sim::HttpUrl target_url_;
-    std::vector<std::unique_ptr<ShardQueue>> shards_;
-    std::vector<std::thread> workers_;
-    std::atomic<uint64_t> ticks_sent_{0};
-    std::atomic<uint64_t> http_errors_{0};
-    bool joined_{false};
-};
-
-struct DayTimestampTracker {
-    std::optional<int64_t> first_epoch_ms;
-    std::optional<int64_t> last_epoch_ms;
-    std::optional<int64_t> max_epoch_ms;
-
-    void record(std::optional<int64_t> epoch_ms) {
-        if (!epoch_ms.has_value()) {
-            return;
-        }
-        if (!first_epoch_ms.has_value()) {
-            first_epoch_ms = epoch_ms;
-        }
-        last_epoch_ms = epoch_ms;
-        if (!max_epoch_ms.has_value() || *epoch_ms > *max_epoch_ms) {
-            max_epoch_ms = epoch_ms;
-        }
-    }
-
-    int64_t elapsed_ms() const {
-        if (!first_epoch_ms.has_value()) {
-            return 0;
-        }
-        if (last_epoch_ms.has_value() && *last_epoch_ms > *first_epoch_ms) {
-            return *last_epoch_ms - *first_epoch_ms;
-        }
-        if (max_epoch_ms.has_value() && *max_epoch_ms > *first_epoch_ms) {
-            return *max_epoch_ms - *first_epoch_ms;
-        }
-        return 0;
-    }
-
-    void reset() {
-        first_epoch_ms.reset();
-        last_epoch_ms.reset();
-        max_epoch_ms.reset();
-    }
-};
-
 struct LiveStatsState {
     std::mutex file_mu;
     std::string current_filename;
@@ -332,7 +178,7 @@ void sleep_interruptible_ms(int64_t delay_ms) {
 }
 
 void print_stats_line(LiveStatsState& state,
-                      const ShardedWorkerPool& pool,
+                      const sim::ShardedPool& pool,
                       std::chrono::steady_clock::time_point start_tp,
                       std::chrono::steady_clock::time_point& prev_tp,
                       uint64_t& prev_completed) {
@@ -373,7 +219,7 @@ int run_stream_mode(const CliOptions& opts,
                     const sim::HttpUrl& target_url,
                     const std::vector<std::string>& files) {
     LiveStatsState stats;
-    ShardedWorkerPool pool(opts.concurrency, target_url);
+    sim::ShardedPool pool(opts.concurrency, target_url, &g_stop_requested);
     auto start_tp = std::chrono::steady_clock::now();
 
     std::mutex stats_mu;
@@ -422,7 +268,7 @@ int run_stream_mode(const CliOptions& opts,
         }
 
         pacer.reset();
-        DayTimestampTracker day_ts;
+        sim::SimTimeTracker day_ts;
         std::vector<std::string> headers;
         std::string line;
 
@@ -439,7 +285,7 @@ int run_stream_mode(const CliOptions& opts,
             sim::ParsedRow row = sim::csv_row_to_json(headers, clean);
             auto epoch_ms = sim::TimestampPacer::resolve_row_epoch_ms(row);
             day_ts.record(epoch_ms);
-            stats.sim_elapsed_ms.store(completed_days_sim_ms + day_ts.elapsed_ms(),
+            stats.sim_elapsed_ms.store(completed_days_sim_ms + day_ts.elapsed_sim_ms(),
                                        std::memory_order_relaxed);
 
             if (opts.speed > 0.0) {
@@ -459,10 +305,11 @@ int run_stream_mode(const CliOptions& opts,
             }
         }
 
-        completed_days_sim_ms += day_ts.elapsed_ms();
+        completed_days_sim_ms += day_ts.elapsed_sim_ms();
         stats.sim_elapsed_ms.store(completed_days_sim_ms, std::memory_order_relaxed);
     }
 
+    pool.wait_idle();
     pool.shutdown_and_join();
 
     {
@@ -501,6 +348,7 @@ int run_probe_mode(const CliOptions& opts,
                    const sim::HttpUrl& target_url,
                    const std::vector<std::string>& files) {
     std::vector<char> io_buf(sim::FILE_STREAM_BUFFER_BYTES);
+    sim::ShardedPool pool(opts.concurrency, target_url, &g_stop_requested);
     double min_speedup = std::numeric_limits<double>::infinity();
     std::size_t probed_days = 0;
     uint64_t total_errors = 0;
@@ -515,6 +363,8 @@ int run_probe_mode(const CliOptions& opts,
         in.open(path, std::ios::binary);
         if (!in.is_open()) {
             std::cerr << "Failed to open CSV file: " << path << "\n";
+            pool.wait_idle();
+            pool.shutdown_and_join();
             return 1;
         }
 
@@ -525,7 +375,8 @@ int run_probe_mode(const CliOptions& opts,
             stats.current_filename = filename;
         }
 
-        ShardedWorkerPool pool(opts.concurrency, target_url);
+        uint64_t sent_before = pool.ticks_sent();
+        uint64_t errors_before = pool.http_errors();
         auto day_start_tp = std::chrono::steady_clock::now();
 
         std::mutex stats_mu;
@@ -533,7 +384,7 @@ int run_probe_mode(const CliOptions& opts,
         bool stats_done = false;
         std::thread stats_thread([&]() {
             auto prev_tp = day_start_tp;
-            uint64_t prev_completed = 0;
+            uint64_t prev_completed = sent_before + errors_before;
             std::unique_lock<std::mutex> lock(stats_mu);
             while (!stats_done && !g_stop_requested.load(std::memory_order_relaxed)) {
                 stats_cv.wait_for(lock, std::chrono::seconds(sim::STATS_INTERVAL_SECONDS), [&]() {
@@ -548,7 +399,7 @@ int run_probe_mode(const CliOptions& opts,
             }
         });
 
-        DayTimestampTracker day_ts;
+        sim::SimTimeTracker day_ts;
         std::vector<std::string> headers;
         std::string line;
         int64_t day_read = 0;
@@ -566,7 +417,7 @@ int run_probe_mode(const CliOptions& opts,
             sim::ParsedRow row = sim::csv_row_to_json(headers, clean);
             auto epoch_ms = sim::TimestampPacer::resolve_row_epoch_ms(row);
             day_ts.record(epoch_ms);
-            stats.sim_elapsed_ms.store(day_ts.elapsed_ms(), std::memory_order_relaxed);
+            stats.sim_elapsed_ms.store(day_ts.elapsed_sim_ms(), std::memory_order_relaxed);
 
             ++day_read;
             stats.ticks_read.fetch_add(1, std::memory_order_relaxed);
@@ -578,7 +429,7 @@ int run_probe_mode(const CliOptions& opts,
             }
         }
 
-        pool.shutdown_and_join();
+        pool.wait_idle();
         auto day_end_tp = std::chrono::steady_clock::now();
 
         {
@@ -591,10 +442,10 @@ int run_probe_mode(const CliOptions& opts,
         }
 
         double wall_sec = std::chrono::duration<double>(day_end_tp - day_start_tp).count();
-        int64_t sim_ms = day_ts.elapsed_ms();
+        int64_t sim_ms = day_ts.elapsed_sim_ms();
         double sim_sec = static_cast<double>(sim_ms) / static_cast<double>(sim::MS_PER_SECOND);
-        uint64_t sent = pool.ticks_sent();
-        uint64_t errors = pool.http_errors();
+        uint64_t sent = pool.ticks_sent() - sent_before;
+        uint64_t errors = pool.http_errors() - errors_before;
         total_errors += errors;
         double rps = (wall_sec > 0.0) ? static_cast<double>(sent + errors) / wall_sec : 0.0;
         double speedup = (wall_sec > 0.0 && sim_sec > 0.0) ? (sim_sec / wall_sec) : 0.0;
@@ -614,6 +465,8 @@ int run_probe_mode(const CliOptions& opts,
                   << " req/s=" << std::setprecision(1) << rps
                   << " speedup=" << std::setprecision(2) << speedup << "x\n";
     }
+
+    pool.shutdown_and_join();
 
     if (probed_days == 0) {
         std::cerr << "No trading days probed.\n";

@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cerrno>
 #include <csignal>
 #include <cstdlib>
@@ -16,6 +17,8 @@
 
 #include "constants.hpp"
 #include "http_sender.hpp"
+#include "sharded_pool.hpp"
+#include "timestamp_pacer.hpp"
 
 #define CHECK(cond)                                                                      \
     do {                                                                                 \
@@ -264,11 +267,112 @@ void test_http_sender_handles_chunked_response() {
     CHECK(accept_count.load() == 1);
 }
 
+void test_sharded_pool_wait_idle_waits_for_http_delivery() {
+    int listen_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    CHECK(listen_fd >= 0);
+
+    int opt = 1;
+    CHECK(::setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == 0);
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = 0;
+    CHECK(::bind(listen_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0);
+    CHECK(::listen(listen_fd, 8) == 0);
+
+    sockaddr_in bound{};
+    socklen_t bound_len = sizeof(bound);
+    CHECK(::getsockname(listen_fd, reinterpret_cast<sockaddr*>(&bound), &bound_len) == 0);
+    uint16_t port = ntohs(bound.sin_port);
+
+    std::atomic<bool> stop_server{false};
+    std::atomic<int> received_count{0};
+    std::vector<std::thread> conn_threads;
+
+    std::thread accept_thread([&]() {
+        while (!stop_server.load(std::memory_order_relaxed)) {
+            int c = ::accept(listen_fd, nullptr, nullptr);
+            if (c < 0) {
+                break;
+            }
+            conn_threads.emplace_back([c, &received_count]() {
+                std::string carry;
+                while (true) {
+                    std::string body;
+                    std::string headers;
+                    if (!read_exact_http_request(c, carry, body, headers)) {
+                        break;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+                    received_count.fetch_add(1, std::memory_order_relaxed);
+                    std::string resp =
+                        "HTTP/1.1 202 Accepted\r\n"
+                        "Content-Length: 0\r\n"
+                        "Connection: keep-alive\r\n\r\n";
+                    if (!send_all_raw(c, resp)) {
+                        break;
+                    }
+                }
+                ::close(c);
+            });
+        }
+    });
+
+    auto url = sim::parse_http_url("http://127.0.0.1:" + std::to_string(port) + "/api/ingest");
+    CHECK(url.has_value());
+
+    {
+        sim::ShardedPool pool(2, *url);
+        auto t0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < 8; ++i) {
+            std::string sym = "SYM_" + std::to_string(i);
+            std::string payload = "{\"i\":" + std::to_string(i) + "}";
+            CHECK(pool.push(sym, std::move(payload)));
+        }
+        pool.wait_idle();
+        auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                              std::chrono::steady_clock::now() - t0)
+                              .count();
+        CHECK(pool.ticks_sent() == 8);
+        CHECK(pool.http_errors() == 0);
+        CHECK(received_count.load(std::memory_order_relaxed) == 8);
+        CHECK(elapsed_ms >= 90);
+        pool.shutdown_and_join();
+    }
+
+    stop_server.store(true, std::memory_order_relaxed);
+    ::shutdown(listen_fd, SHUT_RDWR);
+    ::close(listen_fd);
+    accept_thread.join();
+    for (auto& t : conn_threads) {
+        if (t.joinable()) {
+            t.join();
+        }
+    }
+}
+
+void test_sim_time_tracker_monotonic_high_water() {
+    auto t_a = sim::TimestampPacer::parse_epoch_ms("08-11-2021", "05:10:04.000");
+    auto t_zero = sim::TimestampPacer::parse_epoch_ms("08-11-2021", "00:00:00.000");
+    auto t_b = sim::TimestampPacer::parse_epoch_ms("08-11-2021", "05:10:04.500");
+    CHECK(t_a.has_value() && t_zero.has_value() && t_b.has_value());
+
+    sim::SimTimeTracker tracker;
+    tracker.record(t_a);
+    tracker.record(t_zero);
+    tracker.record(t_b);
+    tracker.record(t_zero);
+    CHECK(tracker.elapsed_sim_ms() == 500);
+}
+
 int main() {
     std::signal(SIGPIPE, SIG_IGN);
     test_parse_http_url_handles_default_and_explicit_ports();
     test_http_sender_keep_alive_reuse_and_reconnect();
     test_http_sender_handles_chunked_response();
+    test_sharded_pool_wait_idle_waits_for_http_delivery();
+    test_sim_time_tracker_monotonic_high_water();
     std::cout << "All HTTP sender tests passed.\n";
     return 0;
 }
