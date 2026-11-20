@@ -1,0 +1,94 @@
+using System.Collections.Concurrent;
+using Trading.Shared.Models;
+using Trading.Shared.Utils;
+
+namespace Trading.Shared.Services;
+
+public interface IWindowProcessor
+{
+    FinalizedWindowRecord? ProcessTick(MinimalTradingEntry tick);
+    void Reset();
+}
+
+public class WindowProcessor : IWindowProcessor
+{
+    private static readonly TimeSpan CestOffset = TimeSpan.FromHours(2);
+
+    private class SymbolState
+    {
+        public DateTime WindowStart { get; set; }
+        public DateTime WindowEnd { get; set; }
+        public double LastPrice { get; set; }
+        public double Ema38 { get; set; } = 0.0;
+        public double Ema100 { get; set; } = 0.0;
+    }
+
+    private readonly ConcurrentDictionary<string, SymbolState> states = new();
+
+    public void Reset() => states.Clear();
+
+    public FinalizedWindowRecord? ProcessTick(MinimalTradingEntry tick)
+    {
+        if (string.IsNullOrWhiteSpace(tick.Id) || !tick.Last.HasValue || !tick.EffectiveDate.HasValue || !tick.EffectiveTime.HasValue)
+        {
+            return null;
+        }
+
+        var date = tick.EffectiveDate.Value;
+        var time = tick.EffectiveTime.Value;
+        int minuteBucket = (time.Minute / Constants.WindowDurationMinutes) * Constants.WindowDurationMinutes;
+        var cestTime = new DateTimeOffset(date.Year, date.Month, date.Day, time.Hour, minuteBucket, 0, CestOffset);
+        var tickWindowStart = cestTime.UtcDateTime;
+        var tickWindowEnd = tickWindowStart.AddMinutes(Constants.WindowDurationMinutes);
+        double currentPrice = (double)tick.Last.Value;
+
+        var state = states.GetOrAdd(tick.Id, _ => new SymbolState
+        {
+            WindowStart = tickWindowStart,
+            WindowEnd = tickWindowEnd,
+            LastPrice = currentPrice
+        });
+
+        lock (state)
+        {
+            if (tickWindowStart < state.WindowStart)
+            {
+                return null;
+            }
+
+            if (tickWindowStart > state.WindowStart)
+            {
+                double closePrice = state.LastPrice;
+                double prevEma38 = state.Ema38;
+                double prevEma100 = state.Ema100;
+
+                double newEma38 = EmaCalculator.CalculateShortEma(closePrice, prevEma38);
+                double newEma100 = EmaCalculator.CalculateLongEma(closePrice, prevEma100);
+
+                var (buySignal, sellSignal) = EmaCalculator.EvaluateBreakout(newEma38, newEma100, prevEma38, prevEma100);
+
+                var record = new FinalizedWindowRecord(
+                    tick.Id,
+                    state.WindowStart,
+                    state.WindowEnd,
+                    newEma38,
+                    newEma100,
+                    closePrice,
+                    buySignal,
+                    sellSignal
+                );
+
+                state.WindowStart = tickWindowStart;
+                state.WindowEnd = tickWindowEnd;
+                state.LastPrice = currentPrice;
+                state.Ema38 = newEma38;
+                state.Ema100 = newEma100;
+
+                return record;
+            }
+
+            state.LastPrice = currentPrice;
+            return null;
+        }
+    }
+}

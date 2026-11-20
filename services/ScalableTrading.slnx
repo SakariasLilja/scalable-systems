@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="shared/Trading.Shared.csproj" />
+  <Project Path="tests/Trading.Tests.csproj" />
+</Solution>
