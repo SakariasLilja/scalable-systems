@@ -10,6 +10,7 @@ specs/
 worktrees/
 node_modules/
 dist/
+simulator/build/
 
 # =========================
 # .NET Build and Publish
