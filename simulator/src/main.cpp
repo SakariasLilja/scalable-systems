@@ -276,8 +276,8 @@ void print_stats_line(LiveStatsState& state,
     double speedup = (total_sec > 0.0 && sim_sec > 0.0) ? (sim_sec / total_sec) : 0.0;
     if (prev_sim_sec && min_speedup) {
         double interval_sim_sec = sim_sec - *prev_sim_sec;
-        if (interval_sec > 0.0 && interval_sim_sec > 0.0) {
-            double interval_speedup = interval_sim_sec / interval_sec;
+        if (interval_sec > 0.0 && (interval_sim_sec > 0.0 || read_count > 0)) {
+            double interval_speedup = (interval_sim_sec > 0.0) ? (interval_sim_sec / interval_sec) : 0.0;
             if (interval_speedup < *min_speedup) {
                 *min_speedup = interval_speedup;
             }
@@ -428,7 +428,7 @@ int run_stream_mode(const CliOptions& opts,
     double sim_sec = static_cast<double>(completed_days_sim_ms) /
                      static_cast<double>(sim::MS_PER_SECOND);
     double speedup = (total_sec > 0.0 && sim_sec > 0.0) ? (sim_sec / total_sec) : 0.0;
-    double reported_min_speedup = std::isfinite(min_speedup) ? min_speedup : speedup;
+    double reported_min_speedup = std::isfinite(min_speedup) ? std::min(min_speedup, speedup) : speedup;
 
     std::cout << std::fixed << std::setprecision(2)
               << "[summary] files=" << files.size()

@@ -50,6 +50,77 @@
   gap: 0.6rem;
 }
 
+.advisory-toolbar .header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.advisory-toolbar .history-btn,
+.advisory-toolbar .dismiss-all-btn {
+  border: none;
+  border-radius: 5px;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.advisory-toolbar .history-btn {
+  background-color: #334155;
+  color: #e2e8f0;
+}
+
+.advisory-toolbar .history-btn:hover {
+  background-color: #475569;
+}
+
+.advisory-toolbar .dismiss-all-btn {
+  background-color: #3f1d2e;
+  color: #fda4af;
+}
+
+.advisory-toolbar .dismiss-all-btn:hover {
+  background-color: #7f1d1d;
+  color: #fecaca;
+}
+
+.advisory-toolbar .follow-label {
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #94a3b8;
+}
+
+.advisory-toolbar .follow-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.advisory-toolbar .follow-pill {
+  padding: 0.22rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid #334155;
+  background-color: #1e293b;
+  color: #cbd5e1;
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.advisory-toolbar .follow-pill.followed {
+  background-color: #0f766e;
+  border-color: #14b8a6;
+  color: #f0fdfa;
+}
+
+.advisory-toolbar .follow-hint {
+  font-size: 0.74rem;
+  color: #64748b;
+}
+
 .workspace-grid {
   display: grid;
   grid-template-columns: 350px minmax(0, 1fr) 350px;

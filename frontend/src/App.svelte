@@ -187,7 +187,9 @@
       if (time) latest_sim_time = time;
       session_advisories = [{ symbol, type, closePrice, ema38, ema100, time }, ...session_advisories].slice(0, advisory_history_limit);
 
-      const should_alert = tracked_symbols.includes(symbol) || followed_markets.includes(extract_market(symbol));
+      const should_alert = !has_custom_followed_markets ||
+        tracked_symbols.includes(symbol) ||
+        followed_markets.includes(extract_market(symbol));
       if (!should_alert) {
         return false;
       }
@@ -362,7 +364,7 @@
 
   function handle_markets_loaded(event) {
     available_markets = Array.isArray(event.detail.markets) ? event.detail.markets : [];
-    if (!has_custom_followed_markets && available_markets.length > 0) {
+    if (!has_custom_followed_markets) {
       followed_markets = [...available_markets];
     }
   }
