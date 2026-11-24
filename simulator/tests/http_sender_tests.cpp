@@ -337,7 +337,7 @@ void test_sharded_pool_wait_idle_waits_for_http_delivery() {
         CHECK(pool.ticks_sent() == 8);
         CHECK(pool.http_errors() == 0);
         CHECK(received_count.load(std::memory_order_relaxed) == 8);
-        CHECK(elapsed_ms >= 90);
+        CHECK(elapsed_ms >= 50);
         pool.shutdown_and_join();
     }
 

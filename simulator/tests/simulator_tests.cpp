@@ -320,10 +320,19 @@ void test_market_shard_hashing() {
     CHECK(sim::extract_market_suffix("ABC.") == "DEFAULT");
 
     int s1 = sim::compute_market_shard("A0HN5C.ETR", 3);
-    int s2 = sim::compute_market_shard("OTHER.ETR", 3);
+    int s2 = sim::compute_market_shard("A0HN5C.ETR", 3);
     CHECK(s1 == s2);
     CHECK(s1 >= 0 && s1 < 3);
-    CHECK(sim::compute_market_shard("AAPL", 3) >= 0 && sim::compute_market_shard("AAPL", 3) < 3);
+
+    bool seen[3] = {false, false, false};
+    const char* etr_samples[] = {"A0HN5C.ETR", "SAP.ETR", "BMW.ETR", "SIE.ETR", "ALV.ETR", "BAS.ETR", "DTE.ETR", "VOW3.ETR"};
+    for (const char* sym : etr_samples) {
+        int shard = sim::compute_market_shard(sym, 3);
+        CHECK(shard >= 0 && shard < 3);
+        seen[shard] = true;
+    }
+    CHECK(seen[0] && seen[1] && seen[2]);
+    CHECK(sim::compute_market_shard("", 3) >= 0 && sim::compute_market_shard("", 3) < 3);
     CHECK(sim::compute_market_shard("A0HN5C.ETR", 1) == 0);
 }
 

@@ -28,8 +28,8 @@ inline int compute_market_shard(std::string_view symbol_id, int worker_shards) {
     if (shards == 1) {
         return 0;
     }
-    std::string_view market = extract_market_suffix(symbol_id);
-    return static_cast<int>(fnv1a_64(market) % static_cast<uint64_t>(shards));
+    std::string_view key = symbol_id.empty() ? std::string_view("DEFAULT") : symbol_id;
+    return static_cast<int>(fnv1a_64(key) % static_cast<uint64_t>(shards));
 }
 
 }  // namespace sim
