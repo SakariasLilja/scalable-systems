@@ -15,6 +15,7 @@
   let canvas_element;
   let chart_instance = null;
   let is_loading = true;
+  let last_appended_key = '';
 
   async function initialize_chart() {
     is_loading = true;
@@ -24,6 +25,11 @@
     const ema38_data = history.map(item => item.ema38);
     const ema100_data = history.map(item => item.ema100);
     const price_data = history.map(item => item.lastPrice);
+
+    if (history.length > 0) {
+      const tail = history[history.length - 1];
+      last_appended_key = `${tail.windowEnd}|${tail.lastPrice}`;
+    }
 
     if (canvas_element) {
       if (chart_instance) {
@@ -97,14 +103,19 @@
 
   function append_live_point(tick) {
     if (!chart_instance) return;
+    const close_price = tick.closePrice ?? tick.price;
+    if (close_price === undefined || close_price === null) return;
+    const key = `${tick.time || ''}|${close_price}`;
+    if (key === last_appended_key) return;
+    last_appended_key = key;
 
     const tick_date = tick.time ? new Date(tick.time) : new Date();
     const time_label = format_eu_time(tick_date, true);
     chart_instance.data.labels.push(time_label);
 
-    chart_instance.data.datasets[0].data.push(tick.ema38 || tick.closePrice);
-    chart_instance.data.datasets[1].data.push(tick.ema100 || tick.closePrice);
-    chart_instance.data.datasets[2].data.push(tick.closePrice);
+    chart_instance.data.datasets[0].data.push(tick.ema38 ?? close_price);
+    chart_instance.data.datasets[1].data.push(tick.ema100 ?? close_price);
+    chart_instance.data.datasets[2].data.push(close_price);
 
     if (chart_instance.data.labels.length > modal_history_limit) {
       chart_instance.data.labels.shift();

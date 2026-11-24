@@ -164,14 +164,17 @@
 
       const filtered = advisory_items.filter((item) => item.symbol !== symbol);
       const next_items = [{ symbol, type, time }, ...filtered];
-      if (next_items.length > advisory_panel_max_items) {
-        const evicted = next_items.splice(advisory_panel_max_items);
-        for (const item of evicted) {
-          clear_advisory_timer(item.symbol);
-          sync_symbol_subscription(item.symbol);
-        }
-      }
+      const evicted = next_items.length > advisory_panel_max_items
+        ? next_items.splice(advisory_panel_max_items)
+        : [];
       advisory_items = next_items;
+      for (const item of evicted) {
+        clear_advisory_timer(item.symbol);
+        if (symbol_data[item.symbol]) {
+          symbol_data[item.symbol] = { ...symbol_data[item.symbol], recent_alert: null };
+        }
+        sync_symbol_subscription(item.symbol);
+      }
       schedule_advisory_expiry(symbol);
 
       session_advisories = [{ symbol, type, closePrice, ema38, ema100, time }, ...session_advisories].slice(0, advisory_history_limit);

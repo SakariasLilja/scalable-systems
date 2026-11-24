@@ -136,49 +136,55 @@ public class DatabaseQueryService(
     {
         int liveCount = liveSymbols.Count;
         DateTime? liveTime = LatestSimulationTime;
-        if (liveCount > 0)
-        {
-            return (liveCount, liveTime);
-        }
 
+        int dbCount;
+        DateTime? dbLatest;
+        bool cacheFresh;
         lock (statusCacheLock)
         {
-            if ((DateTime.UtcNow - cachedDbStatusAtUtc).TotalSeconds < Constants.MarketDbCacheTtlSeconds)
+            cacheFresh = (DateTime.UtcNow - cachedDbStatusAtUtc).TotalSeconds < Constants.MarketDbCacheTtlSeconds;
+            dbCount = cachedDbSymbolCount;
+            dbLatest = cachedDbLatestTime;
+        }
+
+        if (!cacheFresh)
+        {
+            dbCount = 0;
+            dbLatest = null;
+            try
             {
-                return (cachedDbSymbolCount, cachedDbLatestTime);
+                await using var conn = new NpgsqlConnection(BuildConnectionString());
+                await conn.OpenAsync(ct);
+
+                await using var cmd = new NpgsqlCommand(
+                    "SELECT COUNT(DISTINCT symbol_id), MAX(window_end) FROM trading_windows;", conn);
+
+                await using var reader = await cmd.ExecuteReaderAsync(ct);
+                if (await reader.ReadAsync(ct))
+                {
+                    dbCount = reader.IsDBNull(0) ? 0 : (int)reader.GetInt64(0);
+                    dbLatest = reader.IsDBNull(1) ? null : reader.GetDateTime(1);
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Could not fetch status summary from TimescaleDB");
+            }
+
+            lock (statusCacheLock)
+            {
+                cachedDbSymbolCount = dbCount;
+                cachedDbLatestTime = dbLatest;
+                cachedDbStatusAtUtc = DateTime.UtcNow;
             }
         }
 
-        int dbCount = 0;
-        DateTime? dbLatest = null;
-        try
-        {
-            await using var conn = new NpgsqlConnection(BuildConnectionString());
-            await conn.OpenAsync(ct);
+        int mergedCount = Math.Max(liveCount, dbCount);
+        DateTime? mergedTime = liveTime.HasValue && dbLatest.HasValue
+            ? (liveTime.Value >= dbLatest.Value ? liveTime : dbLatest)
+            : (liveTime ?? dbLatest);
 
-            await using var cmd = new NpgsqlCommand(
-                "SELECT COUNT(DISTINCT symbol_id), MAX(window_end) FROM trading_windows;", conn);
-
-            await using var reader = await cmd.ExecuteReaderAsync(ct);
-            if (await reader.ReadAsync(ct))
-            {
-                dbCount = reader.IsDBNull(0) ? 0 : (int)reader.GetInt64(0);
-                dbLatest = reader.IsDBNull(1) ? null : reader.GetDateTime(1);
-            }
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Could not fetch status summary from TimescaleDB");
-        }
-
-        lock (statusCacheLock)
-        {
-            cachedDbSymbolCount = dbCount;
-            cachedDbLatestTime = dbLatest;
-            cachedDbStatusAtUtc = DateTime.UtcNow;
-        }
-
-        return (dbCount, dbLatest);
+        return (mergedCount, mergedTime);
     }
 
     public static IReadOnlyList<string> FilterSymbols(IEnumerable<string> symbols, string? query, int limit)

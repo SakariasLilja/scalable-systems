@@ -466,6 +466,45 @@ public class ServerResetAndSseTests
         Assert.Contains("2021-11-08T09:10:00Z", json);
     }
 
+    [Fact]
+    public async Task SseService_ConcurrentClientHandoff_NeverLeavesCountOutOfSync()
+    {
+        var sseService = new SseService(NullLogger<SseService>.Instance);
+        var transitions = new List<int>();
+        sseService.ActiveConnectionCountChanged += count =>
+        {
+            lock (transitions) transitions.Add(count);
+        };
+
+        var ctxA = new DefaultHttpContext { Response = { Body = new MemoryStream() } };
+        var ctxB = new DefaultHttpContext { Response = { Body = new MemoryStream() } };
+        using var ctsA = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var ctsB = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        var regA = sseService.RegisterClient("client_A", ctxA.Response, ctsA.Token);
+        var regB = sseService.RegisterClient("client_B", ctxB.Response, ctsB.Token);
+        await Task.Delay(30);
+
+        ctsA.Cancel();
+        await regA;
+
+        Assert.Equal(1, sseService.ActiveConnectionCount);
+        lock (transitions)
+        {
+            Assert.NotEmpty(transitions);
+            Assert.True(transitions[^1] > 0);
+        }
+
+        ctsB.Cancel();
+        await regB;
+
+        Assert.Equal(0, sseService.ActiveConnectionCount);
+        lock (transitions)
+        {
+            Assert.Equal(0, transitions[^1]);
+        }
+    }
+
     private sealed class StubHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> handler) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)

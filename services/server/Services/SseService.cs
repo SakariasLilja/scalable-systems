@@ -41,9 +41,7 @@ public class SseService(ILogger<SseService> logger, int batchIntervalMs = Consta
     private readonly int effectiveBatchIntervalMs = Math.Max(10, batchIntervalMs);
     private readonly ConcurrentDictionary<string, ClientConnection> connections = new();
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, string>> subscriptions = new();
-    private readonly ConcurrentDictionary<string, object> clientLocks = new();
-
-    private object GetClientLock(string clientId) => clientLocks.GetOrAdd(clientId, _ => new object());
+    private readonly object connectionStateLock = new();
 
     public int ActiveConnectionCount => connections.Count;
     public event Action<int>? ActiveConnectionCountChanged;
@@ -64,7 +62,7 @@ public class SseService(ILogger<SseService> logger, int batchIntervalMs = Consta
 
         bool becameActive;
         int currentCount;
-        lock (GetClientLock(clientId))
+        lock (connectionStateLock)
         {
             bool wasEmpty = connections.IsEmpty;
             connections[clientId] = connection;
@@ -94,7 +92,7 @@ public class SseService(ILogger<SseService> logger, int batchIntervalMs = Consta
         finally
         {
             bool becameEmpty = false;
-            lock (GetClientLock(clientId))
+            lock (connectionStateLock)
             {
                 if (connections.TryGetValue(clientId, out var current) && ReferenceEquals(current, connection))
                 {
@@ -256,7 +254,18 @@ public class SseService(ILogger<SseService> logger, int batchIntervalMs = Consta
         }
         catch
         {
-            if (connections.TryRemove(new KeyValuePair<string, ClientConnection>(connection.ClientId, connection)) && connections.IsEmpty)
+            bool becameEmpty = false;
+            lock (connectionStateLock)
+            {
+                if (connections.TryGetValue(connection.ClientId, out var current) && ReferenceEquals(current, connection))
+                {
+                    connections.TryRemove(connection.ClientId, out _);
+                    subscriptions.TryRemove(connection.ClientId, out _);
+                    becameEmpty = connections.IsEmpty;
+                }
+            }
+
+            if (becameEmpty)
             {
                 ActiveConnectionCountChanged?.Invoke(0);
             }
