@@ -6,6 +6,8 @@
   export let symbol_data = {};
   export let latest_ticks = {};
   export let tracked_symbols = [];
+  export let available_markets = [];
+  export let followed_markets = [];
 
   const dispatch = createEventDispatcher();
 </script>
@@ -16,7 +18,35 @@
       <h2>Live Advisories</h2>
       <span class="count-pill">{advisory_items.length}</span>
     </div>
-    <button type="button" class="history-btn" on:click={() => dispatch('open_history')}>History Log</button>
+    <div class="header-actions">
+      {#if advisory_items.length > 0}
+        <button type="button" class="dismiss-all-btn" on:click={() => dispatch('dismiss_all_advisories')}>Dismiss All</button>
+      {/if}
+      <button type="button" class="history-btn" on:click={() => dispatch('open_history')}>History Log</button>
+    </div>
+  </div>
+
+  <div class="follow-bar">
+    <span class="follow-label">Follow Markets</span>
+    <div class="follow-pills">
+      {#if available_markets.length === 0}
+        <span class="follow-hint">Tracked stocks always alert</span>
+      {:else}
+        {#each available_markets as market (market)}
+          <button
+            type="button"
+            class="follow-pill"
+            class:followed={followed_markets.includes(market)}
+            on:click={() => dispatch('toggle_follow_market', { market })}
+          >
+            {market}
+          </button>
+        {/each}
+      {/if}
+    </div>
+    {#if available_markets.length > 0 && followed_markets.length === 0}
+      <span class="follow-hint">Tracked stocks always alert</span>
+    {/if}
   </div>
 
   {#if advisory_items.length === 0}
@@ -57,6 +87,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 0.5rem;
     border-bottom: 1px solid #1e293b;
     padding-bottom: 0.7rem;
   }
@@ -79,18 +110,72 @@
     font-size: 0.78rem;
     font-weight: 700;
   }
-  .history-btn {
-    background-color: #334155;
-    color: #e2e8f0;
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .history-btn,
+  .dismiss-all-btn {
     border: none;
     border-radius: 5px;
-    padding: 0.35rem 0.7rem;
-    font-size: 0.8rem;
+    padding: 0.35rem 0.65rem;
+    font-size: 0.78rem;
     font-weight: 600;
     cursor: pointer;
   }
+  .history-btn {
+    background-color: #334155;
+    color: #e2e8f0;
+  }
   .history-btn:hover {
     background-color: #475569;
+  }
+  .dismiss-all-btn {
+    background-color: #3f1d2e;
+    color: #fda4af;
+  }
+  .dismiss-all-btn:hover {
+    background-color: #7f1d1d;
+    color: #fecaca;
+  }
+  .follow-bar {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding-bottom: 0.6rem;
+    border-bottom: 1px solid #1e293b;
+  }
+  .follow-label {
+    font-size: 0.74rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #94a3b8;
+  }
+  .follow-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+  .follow-pill {
+    padding: 0.22rem 0.6rem;
+    border-radius: 999px;
+    border: 1px solid #334155;
+    background-color: #1e293b;
+    color: #cbd5e1;
+    font-size: 0.76rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .follow-pill.followed {
+    background-color: #0f766e;
+    border-color: #14b8a6;
+    color: #f0fdfa;
+  }
+  .follow-hint {
+    font-size: 0.74rem;
+    color: #64748b;
   }
   .panel-empty {
     text-align: center;

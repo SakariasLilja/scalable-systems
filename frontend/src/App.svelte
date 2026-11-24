@@ -22,6 +22,7 @@
     audio_throttle_ms,
     advisory_audio_url,
     tracked_symbols_storage_key,
+    followed_markets_storage_key,
     status_poll_interval_ms
   } from './constants.js';
 
@@ -44,9 +45,37 @@
     }
   }
 
+  function load_initial_followed_markets() {
+    try {
+      const cached = localStorage.getItem(followed_markets_storage_key);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {
+    }
+    return [];
+  }
+
+  function save_followed_markets(markets) {
+    try {
+      localStorage.setItem(followed_markets_storage_key, JSON.stringify(markets));
+    } catch {
+    }
+  }
+
+  function extract_market(symbol) {
+    if (!symbol) return '';
+    const dot = symbol.lastIndexOf('.');
+    if (dot < 0 || dot + 1 >= symbol.length) return '';
+    return symbol.slice(dot + 1).toUpperCase();
+  }
+
   let client_id = '';
   let event_source = null;
   let tracked_symbols = load_initial_tracked_symbols();
+  let followed_markets = load_initial_followed_markets();
+  let available_markets = [];
   let symbol_data = {};
   let latest_ticks = {};
   let advisory_items = [];
@@ -153,6 +182,13 @@
     if (event_type === 'advisory_alert') {
       const { symbol, type, closePrice, ema38, ema100, time } = payload;
       if (time) latest_sim_time = time;
+      session_advisories = [{ symbol, type, closePrice, ema38, ema100, time }, ...session_advisories].slice(0, advisory_history_limit);
+
+      const should_alert = tracked_symbols.includes(symbol) || followed_markets.includes(extract_market(symbol));
+      if (!should_alert) {
+        return false;
+      }
+
       symbol_data[symbol] = {
         ...(symbol_data[symbol] || {}),
         price: closePrice,
@@ -177,7 +213,6 @@
       }
       schedule_advisory_expiry(symbol);
 
-      session_advisories = [{ symbol, type, closePrice, ema38, ema100, time }, ...session_advisories].slice(0, advisory_history_limit);
       sync_symbol_subscription(symbol);
       play_advisory_sound();
       return true;
@@ -296,6 +331,35 @@
     await remove_advisory(event.detail.symbol);
   }
 
+  async function handle_dismiss_all_advisories() {
+    const symbols = advisory_items.map((item) => item.symbol);
+    Object.values(advisory_timers).forEach(clearTimeout);
+    advisory_timers = {};
+    advisory_items = [];
+    for (const sym of symbols) {
+      if (symbol_data[sym]) {
+        symbol_data[sym] = { ...symbol_data[sym], recent_alert: null };
+      }
+      await sync_symbol_subscription(sym);
+    }
+    symbol_data = symbol_data;
+  }
+
+  function handle_toggle_follow_market(event) {
+    const market = event.detail.market;
+    if (!market) return;
+    if (followed_markets.includes(market)) {
+      followed_markets = followed_markets.filter((m) => m !== market);
+    } else {
+      followed_markets = [...followed_markets, market];
+    }
+    save_followed_markets(followed_markets);
+  }
+
+  function handle_markets_loaded(event) {
+    available_markets = Array.isArray(event.detail.markets) ? event.detail.markets : [];
+  }
+
   async function handle_advisory_action(event) {
     await remove_advisory(event.detail.symbol);
   }
@@ -340,6 +404,7 @@
       {reset_counter}
       on:add_symbol={handle_add_symbol}
       on:untrack_symbol={handle_untrack_symbol}
+      on:markets_loaded={handle_markets_loaded}
     />
 
     <div class="workspace-grid">
@@ -359,10 +424,14 @@
         {symbol_data}
         {latest_ticks}
         {tracked_symbols}
+        {available_markets}
+        {followed_markets}
         on:select_active={handle_open_active}
         on:track_symbol={handle_add_symbol}
         on:untrack_symbol={handle_untrack_symbol}
         on:dismiss_advisory={handle_dismiss_advisory}
+        on:dismiss_all_advisories={handle_dismiss_all_advisories}
+        on:toggle_follow_market={handle_toggle_follow_market}
         on:advisory_action={handle_advisory_action}
         on:open_history={() => (is_history_modal_open = true)}
       />

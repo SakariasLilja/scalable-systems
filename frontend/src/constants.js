@@ -21,6 +21,7 @@ export const default_market_symbols_limit = 5000;
 export const search_debounce_ms = 150;
 export const search_timeout_ms = 3000;
 export const tracked_symbols_storage_key = 'tick_detector_tracked_symbols';
+export const followed_markets_storage_key = 'tick_detector_followed_markets';
 
 export const chart_colors = {
   ema_38: '#38bdf8',

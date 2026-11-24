@@ -19,6 +19,7 @@
   async function load_markets() {
     const result = await get_markets();
     markets = Array.isArray(result) ? result : [];
+    dispatch('markets_loaded', { markets });
     if (selected_market && !markets.includes(selected_market)) {
       selected_market = '';
       market_symbols = [];
@@ -56,6 +57,7 @@
     market_symbols = [];
     filter_text = '';
     last_known_count = -1;
+    dispatch('markets_loaded', { markets: [] });
   }
 
   $: if (known_symbol_count !== last_known_count) {
