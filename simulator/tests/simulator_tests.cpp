@@ -9,6 +9,7 @@
 #include "burst_tracker.hpp"
 #include "constants.hpp"
 #include "csv_json.hpp"
+#include "csv_seeker.hpp"
 #include "day_discovery.hpp"
 #include "timestamp_pacer.hpp"
 
@@ -232,11 +233,80 @@ static void test_burst_tracker() {
     CHECK(sim::compute_maintainable_speedup(0.0, 700.0) == 0.0);
 }
 
+void test_csv_seeker_and_date_label() {
+    CHECK(sim::extract_date_label("/tmp/debs2022-gc-trading-day-08-11-21.csv") == "08-11-21");
+    CHECK(sim::extract_date_label("/tmp/custom_file.csv") == "custom_file.csv");
+
+    auto t1 = sim::parse_time_of_day_ms("09:00");
+    CHECK(t1.has_value() && *t1 == 9LL * 3600 * 1000);
+    auto t2 = sim::parse_time_of_day_ms("09:15:30.250");
+    CHECK(t2.has_value() && *t2 == (9LL * 3600 + 15 * 60 + 30) * 1000 + 250);
+    CHECK(!sim::parse_time_of_day_ms("25:00:00").has_value());
+    CHECK(!sim::parse_time_of_day_ms("bad").has_value());
+
+    fs::path tmp = fs::temp_directory_path() / "sim_test_seeker.csv";
+    {
+        std::ofstream out(tmp);
+        out << "# comment\n";
+        out << "ID,SecType,Last,Trading time,LastTime,Time\n";
+        out << "A.ETR,E,10.0,08:00:00,08:00:00,08:00:00\n";
+        out << "B.ETR,E,10.1,,,\n";
+        out << "C.ETR,E,10.2,,,\n";
+        out << "D.ETR,E,10.3,09:00:05,09:00:05,09:00:05\n";
+        out << "E.ETR,E,10.4,09:30:00,09:30:00,09:30:00\n";
+    }
+
+    auto open_and_read_headers = [&](std::ifstream& in, std::vector<std::string>& headers) {
+        in.open(tmp);
+        CHECK(in.is_open());
+        std::string line;
+        while (std::getline(in, line)) {
+            std::string_view clean = sim::strip_cr(line);
+            if (!sim::is_comment_or_empty(clean)) {
+                headers = sim::parse_csv_line(clean);
+                break;
+            }
+        }
+    };
+
+    {
+        std::ifstream in;
+        std::vector<std::string> headers;
+        open_and_read_headers(in, headers);
+        sim::seek_csv_to_time(in, *sim::parse_time_of_day_ms("09:00:00"), headers);
+        std::string next_line;
+        CHECK(static_cast<bool>(std::getline(in, next_line)));
+        CHECK(next_line.rfind("D.ETR,", 0) == 0);
+    }
+
+    {
+        std::ifstream in;
+        std::vector<std::string> headers;
+        open_and_read_headers(in, headers);
+        sim::seek_csv_to_time(in, *sim::parse_time_of_day_ms("07:00:00"), headers);
+        std::string next_line;
+        CHECK(static_cast<bool>(std::getline(in, next_line)));
+        CHECK(next_line.rfind("A.ETR,", 0) == 0);
+    }
+
+    {
+        std::ifstream in;
+        std::vector<std::string> headers;
+        open_and_read_headers(in, headers);
+        sim::seek_csv_to_time(in, *sim::parse_time_of_day_ms("12:00:00"), headers);
+        std::string next_line;
+        CHECK(!static_cast<bool>(std::getline(in, next_line)));
+    }
+
+    fs::remove(tmp);
+}
+
 int main() {
     test_discover_trading_days_chronological_and_filters_zone_identifier();
     test_csv_row_to_json_preserves_raw_values_and_escapes_quotes();
     test_timestamp_pacer_handles_colons_and_caps_day_transition_gap();
     test_burst_tracker();
+    test_csv_seeker_and_date_label();
     std::cout << "All simulator tests passed.\n";
     return 0;
 }

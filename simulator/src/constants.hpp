@@ -16,7 +16,12 @@ inline constexpr int64_t HOURS_PER_DAY = 24;
 inline constexpr int CENTURY_BASE_YEAR = 2000;
 
 inline constexpr std::size_t MAX_SHARD_QUEUE_SIZE = 4096;
-inline constexpr int DEFAULT_CONCURRENCY = 4;
+inline constexpr int DEFAULT_CONCURRENCY = 16;
+inline constexpr int DEFAULT_BATCH_SIZE = 1;
+inline constexpr int64_t BATCH_FLUSH_TIMEOUT_MS = 10;
+inline constexpr int MAX_SEEK_ITERATIONS = 64;
+inline constexpr int MAX_SEEK_SCAN_LINES = 256;
+inline constexpr const char* DEFAULT_PROBE_START_TIME = "09:00:00";
 inline constexpr double DEFAULT_SPEED = 1.0;
 inline constexpr int64_t STATS_INTERVAL_SECONDS = 2;
 inline constexpr int64_t QUEUE_POLL_TIMEOUT_MS = 50;

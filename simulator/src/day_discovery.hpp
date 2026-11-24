@@ -67,6 +67,16 @@ inline bool ends_with_csv(std::string_view filename) {
 
 }  // namespace detail
 
+inline std::string extract_date_label(const std::string& file_path) {
+    namespace fs = std::filesystem;
+    std::string filename = fs::path(file_path).filename().string();
+    auto key = detail::extract_day_key_from_filename(filename);
+    if (key.has_value() && filename.size() >= 12) {
+        return filename.substr(filename.size() - 12, 8);
+    }
+    return filename;
+}
+
 inline std::vector<std::string> discover_trading_days(const std::string& data_dir,
                                                       const std::string& single_day = "",
                                                       const std::string& start_day = "") {
