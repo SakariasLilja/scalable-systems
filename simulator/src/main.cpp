@@ -38,6 +38,7 @@ struct CliOptions {
     std::string url = sim::DEFAULT_INGEST_URL;
     double speed = sim::DEFAULT_SPEED;
     int concurrency = sim::DEFAULT_CONCURRENCY;
+    int worker_shards = sim::DEFAULT_WORKER_SHARDS;
     int batch_size = sim::DEFAULT_BATCH_SIZE;
     std::string day;
     std::string file;
@@ -62,6 +63,8 @@ void print_usage(const char* prog) {
               << sim::DEFAULT_SPEED << ")\n"
               << "  --concurrency <int>   Sharded keep-alive worker threads (default: "
               << sim::DEFAULT_CONCURRENCY << ")\n"
+              << "  --worker-shards <int> Number of market-sharded Worker pods (default: "
+              << sim::DEFAULT_WORKER_SHARDS << ")\n"
               << "  --batch-size <int>    Optional JSON-array batch size per HTTP POST (default: "
               << sim::DEFAULT_BATCH_SIZE << ")\n"
               << "  --day <dd-mm-yy>      Run a single trading day\n"
@@ -145,6 +148,20 @@ bool parse_args(int argc, char* argv[], CliOptions& opts, std::string& err_msg) 
                 opts.concurrency = c;
             } catch (...) {
                 err_msg = "Invalid --concurrency value: " + val;
+                return false;
+            }
+        } else if (key == "--worker-shards") {
+            if (!next_value(i, arg, val)) return false;
+            try {
+                std::size_t pos = 0;
+                int ws = std::stoi(val, &pos);
+                if (pos != val.size() || ws <= 0) {
+                    err_msg = "Invalid --worker-shards value: " + val;
+                    return false;
+                }
+                opts.worker_shards = ws;
+            } catch (...) {
+                err_msg = "Invalid --worker-shards value: " + val;
                 return false;
             }
         } else if (key == "--day") {
@@ -278,7 +295,7 @@ int run_stream_mode(const CliOptions& opts,
                     const sim::HttpUrl& target_url,
                     const std::vector<std::string>& files) {
     LiveStatsState stats;
-    sim::ShardedPool pool(opts.concurrency, target_url, &g_stop_requested, opts.batch_size);
+    sim::ShardedPool pool(opts.concurrency, target_url, &g_stop_requested, opts.batch_size, opts.worker_shards);
     auto start_tp = std::chrono::steady_clock::now();
 
     std::mutex stats_mu;
@@ -415,7 +432,7 @@ int run_probe_mode(const CliOptions& opts,
                    const sim::HttpUrl& target_url,
                    const std::vector<std::string>& files) {
     std::vector<char> io_buf(sim::FILE_STREAM_BUFFER_BYTES);
-    sim::ShardedPool pool(opts.concurrency, target_url, &g_stop_requested, opts.batch_size);
+    sim::ShardedPool pool(opts.concurrency, target_url, &g_stop_requested, opts.batch_size, opts.worker_shards);
     double min_speedup = std::numeric_limits<double>::infinity();
     std::size_t probed_days = 0;
     uint64_t total_errors = 0;

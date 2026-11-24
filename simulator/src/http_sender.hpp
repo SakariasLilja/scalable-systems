@@ -165,9 +165,10 @@ public:
         }
     }
 
-    HttpPostResult post_json(std::string_view json_body) {
+    HttpPostResult post_json(std::string_view json_body,
+                             std::optional<int> market_shard = std::nullopt) {
         std::string request;
-        request.reserve(160 + target_.path.size() + target_.host.size() + target_.port.size() +
+        request.reserve(192 + target_.path.size() + target_.host.size() + target_.port.size() +
                         json_body.size());
         request.append("POST ");
         request.append(target_.path);
@@ -177,6 +178,10 @@ public:
         request.append(target_.port);
         request.append("\r\nContent-Type: application/json\r\nContent-Length: ");
         request.append(std::to_string(json_body.size()));
+        if (market_shard.has_value()) {
+            request.append("\r\nX-Market-Shard: ");
+            request.append(std::to_string(*market_shard));
+        }
         request.append("\r\nConnection: keep-alive\r\n\r\n");
         request.append(json_body);
 

@@ -11,6 +11,7 @@
 #include "csv_json.hpp"
 #include "csv_seeker.hpp"
 #include "day_discovery.hpp"
+#include "market_shard.hpp"
 #include "timestamp_pacer.hpp"
 
 namespace fs = std::filesystem;
@@ -301,12 +302,28 @@ void test_csv_seeker_and_date_label() {
     fs::remove(tmp);
 }
 
+void test_market_shard_hashing() {
+    CHECK(sim::extract_market_suffix("A0HN5C.ETR") == "ETR");
+    CHECK(sim::extract_market_suffix("RDSA.NL") == "NL");
+    CHECK(sim::extract_market_suffix("NEW_STOCK.UNKNOWN_MKT") == "UNKNOWN_MKT");
+    CHECK(sim::extract_market_suffix("AAPL") == "DEFAULT");
+    CHECK(sim::extract_market_suffix("ABC.") == "DEFAULT");
+
+    int s1 = sim::compute_market_shard("A0HN5C.ETR", 3);
+    int s2 = sim::compute_market_shard("OTHER.ETR", 3);
+    CHECK(s1 == s2);
+    CHECK(s1 >= 0 && s1 < 3);
+    CHECK(sim::compute_market_shard("AAPL", 3) >= 0 && sim::compute_market_shard("AAPL", 3) < 3);
+    CHECK(sim::compute_market_shard("A0HN5C.ETR", 1) == 0);
+}
+
 int main() {
     test_discover_trading_days_chronological_and_filters_zone_identifier();
     test_csv_row_to_json_preserves_raw_values_and_escapes_quotes();
     test_timestamp_pacer_handles_colons_and_caps_day_transition_gap();
     test_burst_tracker();
     test_csv_seeker_and_date_label();
+    test_market_shard_hashing();
     std::cout << "All simulator tests passed.\n";
     return 0;
 }

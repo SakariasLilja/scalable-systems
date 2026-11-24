@@ -17,6 +17,7 @@
 
 #include "constants.hpp"
 #include "http_sender.hpp"
+#include "market_shard.hpp"
 
 namespace sim {
 
@@ -56,16 +57,19 @@ public:
     ShardedPool(int concurrency,
                 const HttpUrl& target_url,
                 const std::atomic<bool>* stop_flag = nullptr,
-                int batch_size = DEFAULT_BATCH_SIZE)
+                int batch_size = DEFAULT_BATCH_SIZE,
+                int worker_shards = DEFAULT_WORKER_SHARDS)
         : target_url_(target_url),
           stop_flag_(stop_flag),
-          batch_size_(std::max(1, batch_size)) {
-        shards_.reserve(static_cast<std::size_t>(concurrency));
-        for (int i = 0; i < concurrency; ++i) {
+          batch_size_(std::max(1, batch_size)),
+          worker_shards_(std::max(1, worker_shards)) {
+        int queue_count = std::max(std::max(1, concurrency), worker_shards_);
+        shards_.reserve(static_cast<std::size_t>(queue_count));
+        for (int i = 0; i < queue_count; ++i) {
             shards_.push_back(std::make_unique<ShardQueue>());
         }
-        workers_.reserve(static_cast<std::size_t>(concurrency));
-        for (int i = 0; i < concurrency; ++i) {
+        workers_.reserve(static_cast<std::size_t>(queue_count));
+        for (int i = 0; i < queue_count; ++i) {
             workers_.emplace_back(&ShardedPool::worker_loop, this, i);
         }
     }
@@ -78,7 +82,17 @@ public:
     ShardedPool& operator=(const ShardedPool&) = delete;
 
     bool push(const std::string& symbol_id, std::string&& json_payload) {
-        std::size_t idx = std::hash<std::string>{}(symbol_id) % shards_.size();
+        std::size_t sym_hash = std::hash<std::string>{}(symbol_id);
+        std::size_t idx = 0;
+        if (worker_shards_ <= 1) {
+            idx = sym_hash % shards_.size();
+        } else {
+            int mshard = compute_market_shard(symbol_id, worker_shards_);
+            std::size_t m = static_cast<std::size_t>(mshard);
+            std::size_t ws = static_cast<std::size_t>(worker_shards_);
+            std::size_t slots = (shards_.size() - 1 - m) / ws + 1;
+            idx = m + (sym_hash % slots) * ws;
+        }
         ShardQueue& shard = *shards_[idx];
         std::unique_lock<std::mutex> lock(shard.mu);
         while (shard.items.size() >= MAX_SHARD_QUEUE_SIZE && !shard.closed && !is_stopped()) {
@@ -232,7 +246,11 @@ private:
                 payload.push_back(']');
             }
 
-            HttpPostResult res = sender.post_json(payload);
+            std::optional<int> mshard_header = std::nullopt;
+            if (worker_shards_ > 1) {
+                mshard_header = shard_index % worker_shards_;
+            }
+            HttpPostResult res = sender.post_json(payload, mshard_header);
             std::size_t count = batch.size();
             if (res.ok) {
                 ticks_sent_.fetch_add(count, std::memory_order_relaxed);
@@ -246,6 +264,7 @@ private:
     HttpUrl target_url_;
     const std::atomic<bool>* stop_flag_{nullptr};
     int batch_size_{DEFAULT_BATCH_SIZE};
+    int worker_shards_{DEFAULT_WORKER_SHARDS};
     std::atomic<bool> force_stop_{false};
     std::vector<std::unique_ptr<ShardQueue>> shards_;
     std::vector<std::thread> workers_;

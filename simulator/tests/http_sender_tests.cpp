@@ -509,7 +509,7 @@ void test_sharded_pool_batches_json_arrays_when_enabled() {
     CHECK(url.has_value());
 
     {
-        sim::ShardedPool pool(1, *url, nullptr, 3);
+        sim::ShardedPool pool(1, *url, nullptr, 3, 1);
         for (int i = 0; i < 5; ++i) {
             CHECK(pool.push("SAME.ETR", "{\"i\":" + std::to_string(i) + "}"));
         }

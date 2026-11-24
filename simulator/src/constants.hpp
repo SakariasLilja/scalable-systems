@@ -17,6 +17,7 @@ inline constexpr int CENTURY_BASE_YEAR = 2000;
 
 inline constexpr std::size_t MAX_SHARD_QUEUE_SIZE = 4096;
 inline constexpr int DEFAULT_CONCURRENCY = 16;
+inline constexpr int DEFAULT_WORKER_SHARDS = 3;
 inline constexpr int DEFAULT_BATCH_SIZE = 1;
 inline constexpr int64_t BATCH_FLUSH_TIMEOUT_MS = 10;
 inline constexpr int MAX_SEEK_ITERATIONS = 64;
