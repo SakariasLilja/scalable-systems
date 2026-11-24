@@ -30,7 +30,9 @@ public static class Constants
     public const string SubscriptionActive = "active";
 
     public const int DefaultSymbolSearchLimit = 20;
+    public const int DefaultMarketSymbolsLimit = 200;
     public const int DefaultHistoryLimit = 50;
+    public const int SseBatchIntervalMs = 200;
     public const int TrackedPushIntervalMs = 10000;
     public const int ActivePushIntervalMs = 2000;
 }

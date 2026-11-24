@@ -26,6 +26,12 @@ public class ServerResetAndSseTests
         public Task<IReadOnlyList<string>> SearchSymbolsAsync(string? query, int limit, CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<string>>([]);
 
+        public Task<IReadOnlyList<string>> GetMarketsAsync(CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<string>>([]);
+
+        public Task<IReadOnlyList<string>> GetSymbolsByMarketAsync(string market, string? query, int limit, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<string>>([]);
+
         public Task TruncateTradingWindowsAsync(CancellationToken ct = default)
         {
             callOrder.Add("truncate");
@@ -131,6 +137,7 @@ public class ServerResetAndSseTests
             false);
 
         await sseService.BroadcastWindowUpdate(record);
+        await Task.Delay(250);
         await sseService.BroadcastEvent("reset", new { cleared = true });
 
         cts.Cancel();
@@ -138,8 +145,9 @@ public class ServerResetAndSseTests
 
         string sseOutput = Encoding.UTF8.GetString(bodyStream.ToArray());
         Assert.Contains("event: connected", sseOutput);
-        Assert.Contains("event: active_update", sseOutput);
-        Assert.Contains("event: advisory_alert", sseOutput);
+        Assert.Contains("event: batch_update", sseOutput);
+        Assert.Contains("\"active_update\"", sseOutput);
+        Assert.Contains("\"advisory_alert\"", sseOutput);
         Assert.Contains("event: reset", sseOutput);
         Assert.Contains("SAP.ETR", sseOutput);
     }
@@ -204,11 +212,14 @@ public class ServerResetAndSseTests
             false,
             false));
 
+        await Task.Delay(250);
+
         cts2.Cancel();
         await reg2;
 
         string sseOutput2 = Encoding.UTF8.GetString(((MemoryStream)ctx2.Response.Body).ToArray());
-        Assert.Contains("event: active_update", sseOutput2);
+        Assert.Contains("event: batch_update", sseOutput2);
+        Assert.Contains("\"active_update\"", sseOutput2);
     }
 
     public class SubscriberProxy : DispatchProxy
@@ -332,5 +343,28 @@ public class ServerResetAndSseTests
         var ok = await resetClient.ResetWorkerAsync();
 
         Assert.False(ok);
+    }
+
+    [Fact]
+    public async Task DatabaseQueryService_DiscoversDynamicMarketsAndFiltersByMarket()
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ConnectionStrings:TimescaleDb"] = "Host=127.0.0.1;Port=1;Database=none;Username=none;Password=none;Timeout=1"
+            })
+            .Build();
+        var dbService = new DatabaseQueryService(config, NullLogger<DatabaseQueryService>.Instance);
+        var now = new DateTime(2021, 11, 8, 9, 0, 0, DateTimeKind.Utc);
+        dbService.RecordLiveSymbol("SAP.ETR", now);
+        dbService.RecordLiveSymbol("BMW.ETR", now);
+        dbService.RecordLiveSymbol("RDSA.NL", now);
+        dbService.RecordLiveSymbol("NEW.XYZ", now);
+
+        var markets = await dbService.GetMarketsAsync();
+        Assert.Equal(["ETR", "NL", "XYZ"], markets);
+
+        var etrSymbols = await dbService.GetSymbolsByMarketAsync("etr", null, 50);
+        Assert.Equal(["BMW.ETR", "SAP.ETR"], etrSymbols);
     }
 }

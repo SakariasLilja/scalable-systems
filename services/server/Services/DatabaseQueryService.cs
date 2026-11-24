@@ -11,6 +11,8 @@ public interface IDatabaseQueryService
 {
     Task<IReadOnlyList<FinalizedWindowRecord>> GetHistoryAsync(string symbol, int limit, CancellationToken ct = default);
     Task<IReadOnlyList<string>> SearchSymbolsAsync(string? query, int limit, CancellationToken ct = default);
+    Task<IReadOnlyList<string>> GetMarketsAsync(CancellationToken ct = default);
+    Task<IReadOnlyList<string>> GetSymbolsByMarketAsync(string market, string? query, int limit, CancellationToken ct = default);
     Task TruncateTradingWindowsAsync(CancellationToken ct = default);
     void RecordLiveSymbol(string symbolId, DateTime windowEnd);
     void ClearLiveSymbols();
@@ -158,6 +160,105 @@ public class DatabaseQueryService(
         }
 
         return FilterSymbols(liveSymbols.Keys.Concat(dbSymbols), trimmed, effectiveLimit);
+    }
+
+    public static string ExtractMarket(string symbolId)
+    {
+        if (string.IsNullOrWhiteSpace(symbolId))
+        {
+            return string.Empty;
+        }
+        int dot = symbolId.LastIndexOf('.');
+        if (dot < 0 || dot + 1 >= symbolId.Length)
+        {
+            return string.Empty;
+        }
+        return symbolId[(dot + 1)..].ToUpperInvariant();
+    }
+
+    public async Task<IReadOnlyList<string>> GetMarketsAsync(CancellationToken ct = default)
+    {
+        var dbMarkets = new List<string>();
+
+        try
+        {
+            await using var conn = new NpgsqlConnection(BuildConnectionString());
+            await conn.OpenAsync(ct);
+
+            await using var cmd = new NpgsqlCommand(
+                "SELECT DISTINCT UPPER(SPLIT_PART(symbol_id, '.', 2)) AS market " +
+                "FROM trading_windows WHERE POSITION('.' IN symbol_id) > 0 ORDER BY market;",
+                conn);
+
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                var market = reader.GetString(0);
+                if (!string.IsNullOrWhiteSpace(market))
+                {
+                    dbMarkets.Add(market);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Could not fetch markets from TimescaleDB; using live cache");
+        }
+
+        var liveMarkets = liveSymbols.Keys
+            .Select(ExtractMarket)
+            .Where(m => !string.IsNullOrWhiteSpace(m));
+
+        return liveMarkets
+            .Concat(dbMarkets)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(m => m, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    public async Task<IReadOnlyList<string>> GetSymbolsByMarketAsync(string market, string? query, int limit, CancellationToken ct = default)
+    {
+        string cleanMarket = market?.Trim().ToUpperInvariant() ?? string.Empty;
+        if (string.IsNullOrEmpty(cleanMarket))
+        {
+            return Array.Empty<string>();
+        }
+
+        int effectiveLimit = limit <= 0 ? Constants.DefaultMarketSymbolsLimit : limit;
+        string trimmed = query?.Trim() ?? string.Empty;
+        var dbSymbols = new List<string>();
+
+        try
+        {
+            await using var conn = new NpgsqlConnection(BuildConnectionString());
+            await conn.OpenAsync(ct);
+
+            await using var cmd = new NpgsqlCommand(
+                "SELECT DISTINCT symbol_id FROM trading_windows " +
+                "WHERE symbol_id ILIKE @marketPattern AND (@q = '' OR symbol_id ILIKE @queryPattern) " +
+                "ORDER BY symbol_id LIMIT @lim;",
+                conn);
+
+            cmd.Parameters.AddWithValue("@marketPattern", $"%.{cleanMarket}");
+            cmd.Parameters.AddWithValue("@q", trimmed);
+            cmd.Parameters.AddWithValue("@queryPattern", $"%{trimmed}%");
+            cmd.Parameters.AddWithValue("@lim", effectiveLimit);
+
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                dbSymbols.Add(reader.GetString(0));
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Could not fetch symbols for market {Market} from TimescaleDB; using live cache", cleanMarket);
+        }
+
+        var liveMatching = liveSymbols.Keys
+            .Where(s => string.Equals(ExtractMarket(s), cleanMarket, StringComparison.OrdinalIgnoreCase));
+
+        return FilterSymbols(liveMatching.Concat(dbSymbols), trimmed, effectiveLimit);
     }
 
     public async Task TruncateTradingWindowsAsync(CancellationToken ct = default)

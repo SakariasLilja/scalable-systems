@@ -19,12 +19,14 @@ public interface ISseService
     int ActiveConnectionCount { get; }
 }
 
-public class SseService(ILogger<SseService> logger) : ISseService
+public class SseService(ILogger<SseService> logger, int batchIntervalMs = Constants.SseBatchIntervalMs) : ISseService
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
+
+    private sealed record QueuedSseEvent(string EventType, object Payload);
 
     private class ClientConnection
     {
@@ -32,8 +34,10 @@ public class SseService(ILogger<SseService> logger) : ISseService
         public required HttpResponse Response { get; init; }
         public required CancellationToken CancellationToken { get; init; }
         public SemaphoreSlim Lock { get; } = new(1, 1);
+        public ConcurrentQueue<QueuedSseEvent> PendingEvents { get; } = new();
     }
 
+    private readonly int effectiveBatchIntervalMs = Math.Max(10, batchIntervalMs);
     private readonly ConcurrentDictionary<string, ClientConnection> connections = new();
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, string>> subscriptions = new();
     private readonly ConcurrentDictionary<string, object> clientLocks = new();
@@ -66,7 +70,11 @@ public class SseService(ILogger<SseService> logger) : ISseService
         try
         {
             await SendSseEvent(connection, "connected", new { clientId, time = DateTime.UtcNow });
-            await Task.Delay(Timeout.Infinite, ct);
+            using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(effectiveBatchIntervalMs));
+            while (await timer.WaitForNextTickAsync(ct))
+            {
+                await FlushPendingBatchAsync(connection);
+            }
         }
         catch (OperationCanceledException)
         {
@@ -131,11 +139,19 @@ public class SseService(ILogger<SseService> logger) : ISseService
 
     public async Task BroadcastEvent(string eventType, object data)
     {
+        if (string.Equals(eventType, "reset", StringComparison.OrdinalIgnoreCase))
+        {
+            foreach (var conn in connections.Values)
+            {
+                while (conn.PendingEvents.TryDequeue(out _)) { }
+            }
+        }
+
         var tasks = connections.Values.Select(conn => SendSseEvent(conn, eventType, data));
         await Task.WhenAll(tasks);
     }
 
-    public async Task BroadcastWindowUpdate(FinalizedWindowRecord record)
+    public Task BroadcastWindowUpdate(FinalizedWindowRecord record)
     {
         var alertType = record.BuySignal ? "BUY" : record.SellSignal ? "SELL" : "NONE";
 
@@ -167,8 +183,6 @@ public class SseService(ILogger<SseService> logger) : ISseService
             time = record.WindowEnd
         } : null;
 
-        var tasks = new List<Task>();
-
         foreach (var (clientId, conn) in connections)
         {
             if (subscriptions.TryGetValue(clientId, out var subs) &&
@@ -176,23 +190,39 @@ public class SseService(ILogger<SseService> logger) : ISseService
             {
                 if (subState == Constants.SubscriptionActive)
                 {
-                    tasks.Add(SendSseEvent(conn, "active_update", activePayload));
+                    conn.PendingEvents.Enqueue(new QueuedSseEvent("active_update", activePayload));
                 }
                 else if (subState == Constants.SubscriptionTracked)
                 {
-                    tasks.Add(SendSseEvent(conn, "tracked_update", trackedPayload));
+                    conn.PendingEvents.Enqueue(new QueuedSseEvent("tracked_update", trackedPayload));
                 }
 
                 if (alertPayload != null && (subState == Constants.SubscriptionTracked || subState == Constants.SubscriptionActive))
                 {
-                    tasks.Add(SendSseEvent(conn, "advisory_alert", alertPayload));
+                    conn.PendingEvents.Enqueue(new QueuedSseEvent("advisory_alert", alertPayload));
                 }
             }
         }
 
-        if (tasks.Count > 0)
+        return Task.CompletedTask;
+    }
+
+    private async Task FlushPendingBatchAsync(ClientConnection connection)
+    {
+        if (connection.PendingEvents.IsEmpty)
         {
-            await Task.WhenAll(tasks);
+            return;
+        }
+
+        var batch = new List<QueuedSseEvent>();
+        while (connection.PendingEvents.TryDequeue(out var item))
+        {
+            batch.Add(item);
+        }
+
+        if (batch.Count > 0)
+        {
+            await SendSseEvent(connection, "batch_update", batch);
         }
     }
 
