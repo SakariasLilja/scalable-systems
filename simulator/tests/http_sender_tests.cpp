@@ -454,6 +454,86 @@ void test_sharded_pool_stops_promptly_when_stop_flag_set() {
     }
 }
 
+void test_sharded_pool_batches_json_arrays_when_enabled() {
+    int listen_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    CHECK(listen_fd >= 0);
+    int opt = 1;
+    CHECK(::setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == 0);
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = 0;
+    CHECK(::bind(listen_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0);
+    CHECK(::listen(listen_fd, 8) == 0);
+    sockaddr_in bound{};
+    socklen_t bound_len = sizeof(bound);
+    CHECK(::getsockname(listen_fd, reinterpret_cast<sockaddr*>(&bound), &bound_len) == 0);
+    uint16_t port = ntohs(bound.sin_port);
+    std::atomic<bool> stop_server{false};
+    std::mutex bodies_mu;
+    std::vector<std::string> bodies;
+    std::vector<std::thread> conn_threads;
+
+    std::thread accept_thread([&]() {
+        while (!stop_server.load(std::memory_order_relaxed)) {
+            int client_fd = ::accept(listen_fd, nullptr, nullptr);
+            if (client_fd < 0) {
+                break;
+            }
+            conn_threads.emplace_back([client_fd, &bodies_mu, &bodies]() {
+                std::string carry;
+                while (true) {
+                    std::string body;
+                    std::string headers;
+                    if (!read_exact_http_request(client_fd, carry, body, headers)) {
+                        break;
+                    }
+                    {
+                        std::lock_guard<std::mutex> lock(bodies_mu);
+                        bodies.push_back(body);
+                    }
+                    std::string resp =
+                        "HTTP/1.1 202 Accepted\r\n"
+                        "Content-Length: 0\r\n"
+                        "Connection: keep-alive\r\n\r\n";
+                    if (!send_all_raw(client_fd, resp)) {
+                        break;
+                    }
+                }
+                ::close(client_fd);
+            });
+        }
+    });
+
+    auto url = sim::parse_http_url("http://127.0.0.1:" + std::to_string(port) + "/api/ingest");
+    CHECK(url.has_value());
+
+    {
+        sim::ShardedPool pool(1, *url, nullptr, 3);
+        for (int i = 0; i < 5; ++i) {
+            CHECK(pool.push("SAME.ETR", "{\"i\":" + std::to_string(i) + "}"));
+        }
+        pool.wait_idle();
+        CHECK(pool.ticks_sent() == 5);
+        CHECK(pool.http_errors() == 0);
+        pool.shutdown_and_join();
+    }
+
+    stop_server.store(true, std::memory_order_relaxed);
+    ::shutdown(listen_fd, SHUT_RDWR);
+    ::close(listen_fd);
+    accept_thread.join();
+    for (auto& t : conn_threads) {
+        if (t.joinable()) {
+            t.join();
+        }
+    }
+
+    CHECK(bodies.size() == 2);
+    CHECK(bodies[0] == "[{\"i\":0},{\"i\":1},{\"i\":2}]");
+    CHECK(bodies[1] == "[{\"i\":3},{\"i\":4}]");
+}
+
 int main() {
     std::signal(SIGPIPE, SIG_IGN);
     test_parse_http_url_handles_default_and_explicit_ports();
@@ -462,6 +542,7 @@ int main() {
     test_sharded_pool_wait_idle_waits_for_http_delivery();
     test_sim_time_tracker_monotonic_high_water();
     test_sharded_pool_stops_promptly_when_stop_flag_set();
+    test_sharded_pool_batches_json_arrays_when_enabled();
     std::cout << "All HTTP sender tests passed.\n";
     return 0;
 }

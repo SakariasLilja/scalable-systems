@@ -26,7 +26,17 @@ public class IngestController(
 
         using (doc)
         {
-            if (RawTickParser.TryParseTradeTick(doc.RootElement, warningLogger, out var entry) && entry is not null)
+            if (doc.RootElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var element in doc.RootElement.EnumerateArray())
+                {
+                    if (RawTickParser.TryParseTradeTick(element, warningLogger, out var entry) && entry is not null)
+                    {
+                        await ingestionService.EnqueueAsync(entry, ct);
+                    }
+                }
+            }
+            else if (RawTickParser.TryParseTradeTick(doc.RootElement, warningLogger, out var entry) && entry is not null)
             {
                 await ingestionService.EnqueueAsync(entry, ct);
             }

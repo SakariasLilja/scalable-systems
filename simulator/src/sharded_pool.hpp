@@ -55,8 +55,11 @@ class ShardedPool {
 public:
     ShardedPool(int concurrency,
                 const HttpUrl& target_url,
-                const std::atomic<bool>* stop_flag = nullptr)
-        : target_url_(target_url), stop_flag_(stop_flag) {
+                const std::atomic<bool>* stop_flag = nullptr,
+                int batch_size = DEFAULT_BATCH_SIZE)
+        : target_url_(target_url),
+          stop_flag_(stop_flag),
+          batch_size_(std::max(1, batch_size)) {
         shards_.reserve(static_cast<std::size_t>(concurrency));
         for (int i = 0; i < concurrency; ++i) {
             shards_.push_back(std::make_unique<ShardQueue>());
@@ -159,7 +162,7 @@ private:
         HttpKeepAliveSender sender(target_url_);
 
         while (true) {
-            std::string payload;
+            std::vector<std::string> batch;
             {
                 std::unique_lock<std::mutex> lock(shard.mu);
                 shard.cv_not_empty.wait(lock, [&]() {
@@ -178,24 +181,71 @@ private:
                 if (shard.items.empty() && shard.closed) {
                     break;
                 }
-                payload = std::move(shard.items.front());
-                shard.items.pop_front();
+                if (batch_size_ > 1 && shard.items.size() < static_cast<std::size_t>(batch_size_) && !shard.closed) {
+                    auto deadline = std::chrono::steady_clock::now() +
+                                    std::chrono::milliseconds(BATCH_FLUSH_TIMEOUT_MS);
+                    shard.cv_not_empty.wait_until(lock, deadline, [&]() {
+                        return shard.items.size() >= static_cast<std::size_t>(batch_size_) ||
+                               shard.closed || is_stopped();
+                    });
+                    if (is_stopped()) {
+                        std::size_t dropped = shard.items.size();
+                        shard.items.clear();
+                        shard.cv_not_full.notify_all();
+                        lock.unlock();
+                        if (dropped > 0) {
+                            finish_items(dropped);
+                        }
+                        break;
+                    }
+                }
+                std::size_t take = std::min(shard.items.size(), static_cast<std::size_t>(batch_size_));
+                batch.reserve(take);
+                for (std::size_t i = 0; i < take; ++i) {
+                    batch.push_back(std::move(shard.items.front()));
+                    shard.items.pop_front();
+                }
                 lock.unlock();
-                shard.cv_not_full.notify_one();
+                if (take == 1) {
+                    shard.cv_not_full.notify_one();
+                } else if (take > 1) {
+                    shard.cv_not_full.notify_all();
+                }
+            }
+
+            std::string payload;
+            if (batch_size_ == 1) {
+                payload = std::move(batch[0]);
+            } else {
+                std::size_t total_len = 2 + batch.size();
+                for (const auto& item : batch) {
+                    total_len += item.size();
+                }
+                payload.reserve(total_len);
+                payload.push_back('[');
+                for (std::size_t i = 0; i < batch.size(); ++i) {
+                    if (i > 0) {
+                        payload.push_back(',');
+                    }
+                    payload.append(batch[i]);
+                }
+                payload.push_back(']');
             }
 
             HttpPostResult res = sender.post_json(payload);
+            std::size_t count = batch.size();
             if (res.ok) {
-                ticks_sent_.fetch_add(1, std::memory_order_relaxed);
+                ticks_sent_.fetch_add(count, std::memory_order_relaxed);
             } else {
-                http_errors_.fetch_add(1, std::memory_order_relaxed);
+                http_errors_.fetch_add(count, std::memory_order_relaxed);
             }
-            finish_items(1);
+            finish_items(count);
         }
     }
 
     HttpUrl target_url_;
     const std::atomic<bool>* stop_flag_{nullptr};
+    int batch_size_{DEFAULT_BATCH_SIZE};
     std::atomic<bool> force_stop_{false};
     std::vector<std::unique_ptr<ShardQueue>> shards_;
     std::vector<std::thread> workers_;
