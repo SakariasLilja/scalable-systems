@@ -254,6 +254,7 @@ rules:
     resources:
       - services
       - secrets
+      - configmaps
       - nodes
       - endpoints
     verbs:
