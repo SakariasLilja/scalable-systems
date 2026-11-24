@@ -119,25 +119,34 @@ export async function search_symbols(query = '', limit = default_symbol_search_l
 }
 
 export async function get_markets() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), search_timeout_ms);
   try {
-    const response = await fetch(`${api_base_url}/api/symbols/markets`);
+    const response = await fetch(`${api_base_url}/api/symbols/markets`, { signal: controller.signal });
     if (!response.ok) return [];
     return await response.json();
   } catch {
     return [];
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 export async function get_symbols_by_market(market, query = '', limit = default_market_symbols_limit) {
   if (!market) return [];
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), search_timeout_ms);
   try {
     const response = await fetch(
-      `${api_base_url}/api/symbols/by-market/${encodeURIComponent(market)}?q=${encodeURIComponent(query)}&limit=${limit}`
+      `${api_base_url}/api/symbols/by-market/${encodeURIComponent(market)}?q=${encodeURIComponent(query)}&limit=${limit}`,
+      { signal: controller.signal }
     );
     if (!response.ok) return [];
     return await response.json();
   } catch {
     return [];
+  } finally {
+    clearTimeout(timer);
   }
 }
 

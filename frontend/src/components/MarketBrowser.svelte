@@ -1,5 +1,5 @@
 <script>
-  import { createEventDispatcher, onMount } from 'svelte';
+  import { createEventDispatcher } from 'svelte';
   import { get_markets, get_symbols_by_market } from '../lib/sse_service.js';
   import { default_market_symbols_limit } from '../constants.js';
 
@@ -62,8 +62,9 @@
     last_known_count = known_symbol_count;
     load_markets();
     if (selected_market) {
-      get_symbols_by_market(selected_market, '', default_market_symbols_limit).then((symbols) => {
-        if (Array.isArray(symbols)) {
+      const req_market = selected_market;
+      get_symbols_by_market(req_market, '', default_market_symbols_limit).then((symbols) => {
+        if (selected_market === req_market && Array.isArray(symbols)) {
           market_symbols = symbols;
         }
       });
@@ -73,10 +74,6 @@
   $: visible_symbols = filter_text.trim()
     ? market_symbols.filter((s) => s.toLowerCase().includes(filter_text.trim().toLowerCase()))
     : market_symbols;
-
-  onMount(() => {
-    load_markets();
-  });
 </script>
 
 <section class="market-browser">

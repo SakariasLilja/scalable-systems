@@ -543,10 +543,12 @@ int run_probe_mode(const CliOptions& opts,
         double rps = (wall_sec > 0.0) ? static_cast<double>(sent + errors) / wall_sec : 0.0;
         double speedup = (wall_sec > 0.0 && sim_sec > 0.0) ? (sim_sec / wall_sec) : 0.0;
 
-        if (speedup < min_speedup) {
-            min_speedup = speedup;
+        if (day_read > 0 && sim_sec > 0.0) {
+            if (speedup < min_speedup) {
+                min_speedup = speedup;
+            }
+            ++probed_days;
         }
-        ++probed_days;
 
         std::cout << std::fixed << std::setprecision(2)
                   << "[probe] file=" << filename
@@ -556,7 +558,9 @@ int run_probe_mode(const CliOptions& opts,
                   << " wall=" << wall_sec << "s"
                   << " sim=" << sim_sec << "s"
                   << " req/s=" << std::setprecision(1) << rps
-                  << " speedup=" << std::setprecision(2) << speedup << "x\n";
+                  << " speedup=" << std::setprecision(2) << speedup << "x"
+                  << (day_read == 0 ? " (skipped: no rows at/after --start-time)" : "")
+                  << "\n";
     }
 
     if (g_stop_requested.load(std::memory_order_relaxed)) {

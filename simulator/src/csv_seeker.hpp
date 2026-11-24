@@ -143,13 +143,14 @@ inline std::streamoff seek_csv_to_time(std::ifstream& in,
     std::streamoff lo = data_start;
     std::streamoff hi = file_end;
     std::streamoff best_offset = file_end;
+    bool lo_line_aligned = true;
     std::string line;
 
     for (int iter = 0; iter < MAX_SEEK_ITERATIONS && lo < hi; ++iter) {
         std::streamoff mid = lo + (hi - lo) / 2;
         in.clear();
         in.seekg(mid);
-        if (mid > data_start) {
+        if (mid > data_start && !(mid == lo && lo_line_aligned)) {
             if (!std::getline(in, line)) {
                 hi = mid;
                 continue;
@@ -184,7 +185,13 @@ inline std::streamoff seek_csv_to_time(std::ifstream& in,
         }
 
         if (*found_ms < target_ms) {
-            lo = (found_line_end > mid) ? found_line_end : (mid + 1);
+            if (found_line_end > mid) {
+                lo = found_line_end;
+                lo_line_aligned = true;
+            } else {
+                lo = mid + 1;
+                lo_line_aligned = false;
+            }
         } else {
             best_offset = found_line_start;
             hi = mid;

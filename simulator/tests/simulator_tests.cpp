@@ -294,6 +294,16 @@ void test_csv_seeker_and_date_label() {
         std::ifstream in;
         std::vector<std::string> headers;
         open_and_read_headers(in, headers);
+        sim::seek_csv_to_time(in, *sim::parse_time_of_day_ms("09:30:00"), headers);
+        std::string next_line;
+        CHECK(static_cast<bool>(std::getline(in, next_line)));
+        CHECK(next_line.rfind("E.ETR,", 0) == 0);
+    }
+
+    {
+        std::ifstream in;
+        std::vector<std::string> headers;
+        open_and_read_headers(in, headers);
         sim::seek_csv_to_time(in, *sim::parse_time_of_day_ms("12:00:00"), headers);
         std::string next_line;
         CHECK(!static_cast<bool>(std::getline(in, next_line)));
