@@ -17,6 +17,7 @@ public interface ISseService
     Task BroadcastEvent(string eventType, object data);
     Task BroadcastWindowUpdate(FinalizedWindowRecord record);
     int ActiveConnectionCount { get; }
+    event Action<int>? ActiveConnectionCountChanged;
 }
 
 public class SseService(ILogger<SseService> logger, int batchIntervalMs = Constants.SseBatchIntervalMs) : ISseService
@@ -45,6 +46,7 @@ public class SseService(ILogger<SseService> logger, int batchIntervalMs = Consta
     private object GetClientLock(string clientId) => clientLocks.GetOrAdd(clientId, _ => new object());
 
     public int ActiveConnectionCount => connections.Count;
+    public event Action<int>? ActiveConnectionCountChanged;
 
     public async Task RegisterClient(string clientId, HttpResponse response, CancellationToken ct)
     {
@@ -60,12 +62,22 @@ public class SseService(ILogger<SseService> logger, int batchIntervalMs = Consta
             CancellationToken = ct
         };
 
+        bool becameActive;
+        int currentCount;
         lock (GetClientLock(clientId))
         {
+            bool wasEmpty = connections.IsEmpty;
             connections[clientId] = connection;
+            currentCount = connections.Count;
+            becameActive = wasEmpty && currentCount > 0;
         }
 
-        logger.LogInformation("SSE Client {ClientId} connected. Active connections: {Count}", clientId, connections.Count);
+        if (becameActive)
+        {
+            ActiveConnectionCountChanged?.Invoke(currentCount);
+        }
+
+        logger.LogInformation("SSE Client {ClientId} connected. Active connections: {Count}", clientId, currentCount);
 
         try
         {
@@ -81,13 +93,20 @@ public class SseService(ILogger<SseService> logger, int batchIntervalMs = Consta
         }
         finally
         {
+            bool becameEmpty = false;
             lock (GetClientLock(clientId))
             {
                 if (connections.TryGetValue(clientId, out var current) && ReferenceEquals(current, connection))
                 {
                     connections.TryRemove(clientId, out _);
                     subscriptions.TryRemove(clientId, out _);
+                    becameEmpty = connections.IsEmpty;
                 }
+            }
+
+            if (becameEmpty)
+            {
+                ActiveConnectionCountChanged?.Invoke(0);
             }
 
             logger.LogInformation("SSE Client {ClientId} disconnected. Active connections: {Count}", clientId, connections.Count);
@@ -155,7 +174,7 @@ public class SseService(ILogger<SseService> logger, int batchIntervalMs = Consta
     {
         var alertType = record.BuySignal ? "BUY" : record.SellSignal ? "SELL" : "NONE";
 
-        var activePayload = new
+        var windowPayload = new
         {
             symbol = record.SymbolId,
             closePrice = record.LastPrice,
@@ -164,13 +183,6 @@ public class SseService(ILogger<SseService> logger, int batchIntervalMs = Consta
             time = record.WindowEnd,
             buySignal = record.BuySignal,
             sellSignal = record.SellSignal
-        };
-
-        var trackedPayload = new
-        {
-            symbol = record.SymbolId,
-            price = record.LastPrice,
-            time = record.WindowEnd
         };
 
         var alertPayload = alertType != "NONE" ? new
@@ -185,22 +197,16 @@ public class SseService(ILogger<SseService> logger, int batchIntervalMs = Consta
 
         foreach (var (clientId, conn) in connections)
         {
-            if (subscriptions.TryGetValue(clientId, out var subs) &&
-                subs.TryGetValue(record.SymbolId, out var subState))
+            if (alertPayload != null)
             {
-                if (subState == Constants.SubscriptionActive)
-                {
-                    conn.PendingEvents.Enqueue(new QueuedSseEvent("active_update", activePayload));
-                }
-                else if (subState == Constants.SubscriptionTracked)
-                {
-                    conn.PendingEvents.Enqueue(new QueuedSseEvent("tracked_update", trackedPayload));
-                }
+                conn.PendingEvents.Enqueue(new QueuedSseEvent("advisory_alert", alertPayload));
+            }
 
-                if (alertPayload != null && (subState == Constants.SubscriptionTracked || subState == Constants.SubscriptionActive))
-                {
-                    conn.PendingEvents.Enqueue(new QueuedSseEvent("advisory_alert", alertPayload));
-                }
+            if (subscriptions.TryGetValue(clientId, out var subs) &&
+                subs.TryGetValue(record.SymbolId, out var subState) &&
+                (subState == Constants.SubscriptionTracked || subState == Constants.SubscriptionActive))
+            {
+                conn.PendingEvents.Enqueue(new QueuedSseEvent("window_update", windowPayload));
             }
         }
 
@@ -250,7 +256,10 @@ public class SseService(ILogger<SseService> logger, int batchIntervalMs = Consta
         }
         catch
         {
-            connections.TryRemove(new KeyValuePair<string, ClientConnection>(connection.ClientId, connection));
+            if (connections.TryRemove(new KeyValuePair<string, ClientConnection>(connection.ClientId, connection)) && connections.IsEmpty)
+            {
+                ActiveConnectionCountChanged?.Invoke(0);
+            }
         }
     }
 }

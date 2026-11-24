@@ -1,6 +1,7 @@
 <script>
   import { createEventDispatcher } from 'svelte';
   import { clear_database } from '../lib/sse_service.js';
+  import { format_eu_datetime } from '../lib/date_format.js';
 
   export let is_connected = false;
   export let latest_sim_time = null;
@@ -51,7 +52,7 @@
       SSE: <strong>{is_connected ? 'Connected' : 'Disconnected'}</strong>
     </span>
     <span>Known Symbols: <strong>{known_symbol_count}</strong></span>
-    <span>Latest Sim Time: <strong>{latest_sim_time ? new Date(latest_sim_time).toLocaleString() : 'Waiting for stream...'}</strong></span>
+    <span>Latest Sim Time: <strong>{latest_sim_time ? format_eu_datetime(latest_sim_time) : 'Waiting for stream...'}</strong></span>
   </div>
 
   <div class="admin-actions">

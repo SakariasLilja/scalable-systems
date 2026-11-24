@@ -2,12 +2,14 @@
   import { onMount, onDestroy, createEventDispatcher } from 'svelte';
   import { Chart, registerables } from 'chart.js';
   import { fetch_history } from '../lib/sse_service.js';
-  import { chart_colors } from '../constants.js';
+  import { format_eu_time } from '../lib/date_format.js';
+  import { chart_colors, modal_history_limit } from '../constants.js';
 
   Chart.register(...registerables);
 
   export let active_symbol = '';
   export let latest_tick = null;
+  export let advisory_type = null;
 
   const dispatch = createEventDispatcher();
   let canvas_element;
@@ -16,9 +18,9 @@
 
   async function initialize_chart() {
     is_loading = true;
-    const history = await fetch_history(active_symbol, 50);
+    const history = await fetch_history(active_symbol, modal_history_limit);
 
-    const labels = history.map(item => new Date(item.windowStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+    const labels = history.map(item => format_eu_time(item.windowStart));
     const ema38_data = history.map(item => item.ema38);
     const ema100_data = history.map(item => item.ema100);
     const price_data = history.map(item => item.lastPrice);
@@ -97,14 +99,14 @@
     if (!chart_instance) return;
 
     const tick_date = tick.time ? new Date(tick.time) : new Date();
-    const time_label = tick_date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const time_label = format_eu_time(tick_date, true);
     chart_instance.data.labels.push(time_label);
 
     chart_instance.data.datasets[0].data.push(tick.ema38 || tick.closePrice);
     chart_instance.data.datasets[1].data.push(tick.ema100 || tick.closePrice);
     chart_instance.data.datasets[2].data.push(tick.closePrice);
 
-    if (chart_instance.data.labels.length > 50) {
+    if (chart_instance.data.labels.length > modal_history_limit) {
       chart_instance.data.labels.shift();
       chart_instance.data.datasets.forEach(ds => ds.data.shift());
     }
@@ -133,7 +135,20 @@
 <div class="modal-backdrop" role="presentation" on:click|self={handle_close}>
   <div class="modal-content">
     <div class="modal-header">
-      <h2>Real-Time Technical Indicators: {active_symbol}</h2>
+      <div class="modal-title-row">
+        <h2>Real-Time Technical Indicators: {active_symbol}</h2>
+        {#if advisory_type}
+          <button
+            type="button"
+            class="advisory-btn"
+            class:btn-buy={advisory_type === 'BUY'}
+            class:btn-sell={advisory_type === 'SELL'}
+            on:click={() => dispatch('advisory_action', { symbol: active_symbol, type: advisory_type })}
+          >
+            {advisory_type}
+          </button>
+        {/if}
+      </div>
       <button class="close-btn" on:click={handle_close}>&times;</button>
     </div>
 
@@ -145,7 +160,7 @@
     </div>
 
     <div class="modal-footer">
-      <span class="legend-hint">Streaming real-time updates every 2 seconds via SSE.</span>
+      <span class="legend-hint">5-minute tumbling window updates via SSE.</span>
       <button class="action-btn" on:click={handle_close}>Close</button>
     </div>
   </div>
@@ -188,6 +203,28 @@
     margin: 0;
     color: #f8fafc;
     font-size: 1.3rem;
+  }
+  .modal-title-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .advisory-btn {
+    padding: 0.3rem 0.8rem;
+    border-radius: 4px;
+    border: none;
+    font-size: 0.82rem;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+  }
+  .btn-buy {
+    background-color: #22c55e;
+    color: #052e16;
+  }
+  .btn-sell {
+    background-color: #3b82f6;
+    color: #082f49;
   }
   .close-btn {
     background: none;

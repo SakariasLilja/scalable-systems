@@ -14,4 +14,12 @@ public class HistoryController(IDatabaseQueryService dbQueryService) : Controlle
         var records = await dbQueryService.GetHistoryAsync(symbol, limit, ct);
         return Ok(records);
     }
+
+    [HttpGet("/api/advisories")]
+    public async Task<IActionResult> GetAdvisories([FromQuery] int limit = Constants.DefaultAdvisoriesLimit, CancellationToken ct = default)
+    {
+        int clamped = Math.Clamp(limit <= 0 ? Constants.DefaultAdvisoriesLimit : limit, 1, Constants.MaxAdvisoriesLimit);
+        var records = await dbQueryService.GetRecentAdvisoriesAsync(clamped, ct);
+        return Ok(records);
+    }
 }

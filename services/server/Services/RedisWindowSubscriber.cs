@@ -48,6 +48,8 @@ public class RedisWindowSubscriber : BackgroundService
     private readonly IDatabaseQueryService dbQueryService;
     private readonly ILogger<RedisWindowSubscriber> logger;
     private readonly int retryDelayMs;
+    private readonly SemaphoreSlim windowsSubLock = new(1, 1);
+    private bool windowsSubscribed;
 
     [ActivatorUtilitiesConstructor]
     public RedisWindowSubscriber(
@@ -73,18 +75,17 @@ public class RedisWindowSubscriber : BackgroundService
         this.retryDelayMs = retryDelayMs;
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    private async Task SyncWindowsSubscriptionAsync(ISubscriber subscriber, CancellationToken ct)
     {
-        var subscriber = redis.GetSubscriber();
-        bool subscribed = false;
-
-        while (!stoppingToken.IsCancellationRequested && !subscribed)
+        await windowsSubLock.WaitAsync(ct);
+        try
         {
-            try
+            bool shouldSubscribe = sseService.ActiveConnectionCount > 0;
+            if (shouldSubscribe && !windowsSubscribed)
             {
                 await subscriber.SubscribeAsync(WindowsChannel, async (_, value) =>
                 {
-                    if (value.IsNullOrEmpty)
+                    if (value.IsNullOrEmpty || sseService.ActiveConnectionCount == 0)
                     {
                         return;
                     }
@@ -105,7 +106,36 @@ public class RedisWindowSubscriber : BackgroundService
                         logger.LogWarning(ex, "Failed to process Redis finalized window message");
                     }
                 });
+                windowsSubscribed = true;
+            }
+            else if (!shouldSubscribe && windowsSubscribed)
+            {
+                await subscriber.UnsubscribeAsync(WindowsChannel);
+                windowsSubscribed = false;
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to toggle Redis windows subscription");
+        }
+        finally
+        {
+            windowsSubLock.Release();
+        }
+    }
 
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        var subscriber = redis.GetSubscriber();
+        bool subscribed = false;
+
+        while (!stoppingToken.IsCancellationRequested && !subscribed)
+        {
+            try
+            {
                 await subscriber.SubscribeAsync(ResetChannel, async (_, _) =>
                 {
                     try
@@ -152,6 +182,10 @@ public class RedisWindowSubscriber : BackgroundService
             return;
         }
 
+        Action<int> onCountChanged = count => _ = SyncWindowsSubscriptionAsync(subscriber, stoppingToken);
+        sseService.ActiveConnectionCountChanged += onCountChanged;
+        await SyncWindowsSubscriptionAsync(subscriber, stoppingToken);
+
         try
         {
             await Task.Delay(Timeout.Infinite, stoppingToken);
@@ -161,6 +195,7 @@ public class RedisWindowSubscriber : BackgroundService
         }
         finally
         {
+            sseService.ActiveConnectionCountChanged -= onCountChanged;
             try
             {
                 await subscriber.UnsubscribeAllAsync();

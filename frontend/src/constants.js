@@ -9,6 +9,13 @@ export const subscription_states = {
 
 export const status_poll_interval_ms = 5000;
 export const alert_dismiss_timeout_ms = 4000;
+export const card_history_limit = 10;
+export const modal_history_limit = 50;
+export const advisory_expiry_ms = 120000;
+export const advisory_panel_max_items = 20;
+export const advisory_history_limit = 100;
+export const audio_throttle_ms = 1500;
+export const advisory_audio_url = '/advisory_notification.wav';
 export const default_symbol_search_limit = 20;
 export const default_market_symbols_limit = 5000;
 export const search_debounce_ms = 150;

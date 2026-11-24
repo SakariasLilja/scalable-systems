@@ -33,7 +33,7 @@ public static class Constants
     public const int DefaultMarketSymbolsLimit = 5000;
     public const int MarketDbCacheTtlSeconds = 10;
     public const int DefaultHistoryLimit = 50;
+    public const int DefaultAdvisoriesLimit = 100;
+    public const int MaxAdvisoriesLimit = 500;
     public const int SseBatchIntervalMs = 200;
-    public const int TrackedPushIntervalMs = 10000;
-    public const int ActivePushIntervalMs = 2000;
 }

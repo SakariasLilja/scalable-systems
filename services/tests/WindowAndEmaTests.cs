@@ -110,4 +110,74 @@ public class WindowAndEmaTests
         Assert.Equal(50.0, afterResetWin.LastPrice, 6);
         Assert.Equal(EmaCalculator.CalculateShortEma(50.0, 0.0), afterResetWin.Ema38, 6);
     }
+
+    [Fact]
+    public void ProcessTick_ZeroOrNegativePrice_IgnoresUnseenAndFallsBackToPreviousPrice()
+    {
+        var processor = new WindowProcessor();
+        var date = new DateOnly(2021, 11, 8);
+
+        Assert.Null(processor.ProcessTick(new MinimalTradingEntry
+        {
+            Id = "ZERO.ETR",
+            Last = 0m,
+            TradingDate = date,
+            TradingTime = new TimeOnly(9, 0, 5)
+        }));
+
+        Assert.Null(processor.ProcessTick(new MinimalTradingEntry
+        {
+            Id = "ZERO.ETR",
+            Last = -1m,
+            TradingDate = date,
+            TradingTime = new TimeOnly(9, 0, 10)
+        }));
+
+        Assert.Null(processor.ProcessTick(new MinimalTradingEntry
+        {
+            Id = "ZERO.ETR",
+            Last = 50m,
+            TradingDate = date,
+            TradingTime = new TimeOnly(9, 5, 5)
+        }));
+
+        Assert.Null(processor.ProcessTick(new MinimalTradingEntry
+        {
+            Id = "FALLBACK.ETR",
+            Last = 100m,
+            TradingDate = date,
+            TradingTime = new TimeOnly(9, 0, 10)
+        }));
+
+        Assert.Null(processor.ProcessTick(new MinimalTradingEntry
+        {
+            Id = "FALLBACK.ETR",
+            Last = 0m,
+            TradingDate = date,
+            TradingTime = new TimeOnly(9, 4, 50)
+        }));
+
+        var win1 = processor.ProcessTick(new MinimalTradingEntry
+        {
+            Id = "FALLBACK.ETR",
+            Last = 0m,
+            TradingDate = date,
+            TradingTime = new TimeOnly(9, 5, 10)
+        });
+
+        Assert.NotNull(win1);
+        Assert.Equal(100.0, win1.LastPrice, 6);
+        Assert.False(win1.SellSignal);
+
+        var win2 = processor.ProcessTick(new MinimalTradingEntry
+        {
+            Id = "FALLBACK.ETR",
+            Last = 105m,
+            TradingDate = date,
+            TradingTime = new TimeOnly(9, 10, 10)
+        });
+
+        Assert.NotNull(win2);
+        Assert.Equal(100.0, win2.LastPrice, 6);
+    }
 }

@@ -20,8 +20,22 @@ public class ServerResetAndSseTests
         public int LiveSymbolCount => 0;
         public DateTime? LatestSimulationTime => null;
 
+        public int LastAdvisoriesLimit { get; private set; }
+        public int StubKnownSymbols { get; set; }
+        public DateTime? StubLatestTime { get; set; }
+        public IReadOnlyList<AdvisoryRecord> StubAdvisories { get; set; } = [];
+
         public Task<IReadOnlyList<FinalizedWindowRecord>> GetHistoryAsync(string symbol, int limit, CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<FinalizedWindowRecord>>([]);
+
+        public Task<IReadOnlyList<AdvisoryRecord>> GetRecentAdvisoriesAsync(int limit, CancellationToken ct = default)
+        {
+            LastAdvisoriesLimit = limit;
+            return Task.FromResult(StubAdvisories);
+        }
+
+        public Task<(int KnownSymbols, DateTime? LatestSimulationTime)> GetStatusSummaryAsync(CancellationToken ct = default) =>
+            Task.FromResult((StubKnownSymbols, StubLatestTime));
 
         public Task<IReadOnlyList<string>> SearchSymbolsAsync(string? query, int limit, CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<string>>([]);
@@ -146,10 +160,45 @@ public class ServerResetAndSseTests
         string sseOutput = Encoding.UTF8.GetString(bodyStream.ToArray());
         Assert.Contains("event: connected", sseOutput);
         Assert.Contains("event: batch_update", sseOutput);
-        Assert.Contains("\"active_update\"", sseOutput);
+        Assert.Contains("\"window_update\"", sseOutput);
         Assert.Contains("\"advisory_alert\"", sseOutput);
         Assert.Contains("event: reset", sseOutput);
         Assert.Contains("SAP.ETR", sseOutput);
+    }
+
+    [Fact]
+    public async Task SseService_BroadcastWindowUpdate_DeliversAdvisoryAlertToUnsubscribedClient()
+    {
+        var sseService = new SseService(NullLogger<SseService>.Instance);
+        var httpContext = new DefaultHttpContext { Response = { Body = new MemoryStream() } };
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var registerTask = sseService.RegisterClient("client_unsub", httpContext.Response, cts.Token);
+
+        var deadline = DateTime.UtcNow.AddSeconds(2);
+        while (sseService.ActiveConnectionCount == 0 && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+
+        await sseService.BroadcastWindowUpdate(new FinalizedWindowRecord(
+            "UNSUB.ETR",
+            new DateTime(2021, 11, 8, 8, 0, 0, DateTimeKind.Utc),
+            new DateTime(2021, 11, 8, 8, 5, 0, DateTimeKind.Utc),
+            125.5,
+            120.0,
+            126.0,
+            true,
+            false));
+
+        await Task.Delay(250);
+        cts.Cancel();
+        await registerTask;
+
+        string sseOutput = Encoding.UTF8.GetString(((MemoryStream)httpContext.Response.Body).ToArray());
+        Assert.Contains("\"advisory_alert\"", sseOutput);
+        Assert.Contains("UNSUB.ETR", sseOutput);
+        Assert.DoesNotContain("\"window_update\"", sseOutput);
     }
 
     [Fact]
@@ -219,13 +268,15 @@ public class ServerResetAndSseTests
 
         string sseOutput2 = Encoding.UTF8.GetString(((MemoryStream)ctx2.Response.Body).ToArray());
         Assert.Contains("event: batch_update", sseOutput2);
-        Assert.Contains("\"active_update\"", sseOutput2);
+        Assert.Contains("\"window_update\"", sseOutput2);
     }
 
     public class SubscriberProxy : DispatchProxy
     {
         public int SubscribeCalls;
         public int FailCount;
+        public List<string> SubscribedChannels { get; } = [];
+        public List<string> UnsubscribedChannels { get; } = [];
 
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         {
@@ -235,6 +286,18 @@ public class ServerResetAndSseTests
                 if (attempt <= FailCount)
                 {
                     throw new RedisConnectionException(ConnectionFailureType.UnableToConnect, "Simulated Redis startup delay");
+                }
+                if (args is { Length: > 0 } && args[0] is RedisChannel ch)
+                {
+                    lock (SubscribedChannels) SubscribedChannels.Add(ch.ToString());
+                }
+                return Task.CompletedTask;
+            }
+            if (targetMethod?.Name == nameof(ISubscriber.UnsubscribeAsync))
+            {
+                if (args is { Length: > 0 } && args[0] is RedisChannel ch)
+                {
+                    lock (UnsubscribedChannels) UnsubscribedChannels.Add(ch.ToString());
                 }
                 return Task.CompletedTask;
             }
@@ -277,13 +340,130 @@ public class ServerResetAndSseTests
         await subscriber.StartAsync(cts.Token);
 
         var deadline = DateTime.UtcNow.AddSeconds(2);
-        while (Volatile.Read(ref ((SubscriberProxy)(object)subProxy).SubscribeCalls) < 4 && DateTime.UtcNow < deadline)
+        while (Volatile.Read(ref ((SubscriberProxy)(object)subProxy).SubscribeCalls) < 3 && DateTime.UtcNow < deadline)
         {
             await Task.Delay(15);
         }
 
-        Assert.True(Volatile.Read(ref ((SubscriberProxy)(object)subProxy).SubscribeCalls) >= 4);
+        Assert.True(Volatile.Read(ref ((SubscriberProxy)(object)subProxy).SubscribeCalls) >= 3);
         await subscriber.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task RedisWindowSubscriber_DemandGatesWindowsSubscription_OnClientCountChanges()
+    {
+        var subProxy = DispatchProxy.Create<ISubscriber, SubscriberProxy>();
+        var proxyState = (SubscriberProxy)(object)subProxy;
+
+        var muxProxy = DispatchProxy.Create<IConnectionMultiplexer, MultiplexerProxy>();
+        ((MultiplexerProxy)(object)muxProxy).Subscriber = subProxy;
+
+        var sseService = new SseService(NullLogger<SseService>.Instance);
+        var dbService = new DatabaseQueryService(new ConfigurationBuilder().Build(), NullLogger<DatabaseQueryService>.Instance);
+
+        var subscriber = new RedisWindowSubscriber(muxProxy, sseService, dbService, NullLogger<RedisWindowSubscriber>.Instance, retryDelayMs: 10);
+        using var bgCts = new CancellationTokenSource();
+        await subscriber.StartAsync(bgCts.Token);
+
+        await Task.Delay(50);
+        lock (proxyState.SubscribedChannels)
+        {
+            Assert.Contains(Constants.RedisResetChannel, proxyState.SubscribedChannels);
+            Assert.DoesNotContain(Constants.RedisWindowsChannel, proxyState.SubscribedChannels);
+        }
+
+        var ctx1 = new DefaultHttpContext { Response = { Body = new MemoryStream() } };
+        using var cts1 = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var reg1 = sseService.RegisterClient("c1", ctx1.Response, cts1.Token);
+
+        var deadline = DateTime.UtcNow.AddSeconds(2);
+        while (DateTime.UtcNow < deadline)
+        {
+            lock (proxyState.SubscribedChannels)
+            {
+                if (proxyState.SubscribedChannels.Contains(Constants.RedisWindowsChannel)) break;
+            }
+            await Task.Delay(15);
+        }
+
+        lock (proxyState.SubscribedChannels)
+        {
+            Assert.Contains(Constants.RedisWindowsChannel, proxyState.SubscribedChannels);
+        }
+
+        var ctx2 = new DefaultHttpContext { Response = { Body = new MemoryStream() } };
+        using var cts2 = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var reg2 = sseService.RegisterClient("c1", ctx2.Response, cts2.Token);
+        await Task.Delay(30);
+        cts1.Cancel();
+        await reg1;
+        await Task.Delay(30);
+
+        lock (proxyState.UnsubscribedChannels)
+        {
+            Assert.DoesNotContain(Constants.RedisWindowsChannel, proxyState.UnsubscribedChannels);
+        }
+
+        cts2.Cancel();
+        await reg2;
+
+        deadline = DateTime.UtcNow.AddSeconds(2);
+        while (DateTime.UtcNow < deadline)
+        {
+            lock (proxyState.UnsubscribedChannels)
+            {
+                if (proxyState.UnsubscribedChannels.Contains(Constants.RedisWindowsChannel)) break;
+            }
+            await Task.Delay(15);
+        }
+
+        lock (proxyState.UnsubscribedChannels)
+        {
+            Assert.Contains(Constants.RedisWindowsChannel, proxyState.UnsubscribedChannels);
+        }
+
+        await subscriber.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task HistoryController_GetAdvisories_ClampsLimitAndReturnsRecords()
+    {
+        var dbService = new RecordingDatabaseQueryService([])
+        {
+            StubAdvisories =
+            [
+                new AdvisoryRecord("SAP.ETR", "BUY", 125.0, 124.5, 123.0, new DateTime(2021, 11, 8, 9, 5, 0, DateTimeKind.Utc))
+            ]
+        };
+        var controller = new HistoryController(dbService);
+
+        var res = await controller.GetAdvisories(9999, CancellationToken.None);
+        var ok = Assert.IsType<OkObjectResult>(res);
+        var list = Assert.IsAssignableFrom<IReadOnlyList<AdvisoryRecord>>(ok.Value);
+        Assert.Single(list);
+        Assert.Equal(Constants.MaxAdvisoriesLimit, dbService.LastAdvisoriesLimit);
+    }
+
+    [Fact]
+    public async Task DataController_GetStatus_UsesStatusSummaryAsync()
+    {
+        var expectedTime = new DateTime(2021, 11, 8, 9, 10, 0, DateTimeKind.Utc);
+        var dbService = new RecordingDatabaseQueryService([])
+        {
+            StubKnownSymbols = 42,
+            StubLatestTime = expectedTime
+        };
+        var controller = new DataController(
+            dbService,
+            new RecordingWorkerResetClient([]),
+            new RecordingRedisResetPublisher([]),
+            new SseService(NullLogger<SseService>.Instance));
+
+        var res = await controller.GetStatus(CancellationToken.None);
+        var ok = Assert.IsType<OkObjectResult>(res);
+        var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
+        Assert.Contains("\"knownSymbols\":42", json);
+        Assert.Contains("2021-11-08T09:10:00Z", json);
     }
 
     private sealed class StubHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> handler) : HttpMessageHandler

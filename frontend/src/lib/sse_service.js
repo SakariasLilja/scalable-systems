@@ -3,6 +3,7 @@ import {
   sse_stream_url,
   default_symbol_search_limit,
   default_market_symbols_limit,
+  advisory_history_limit,
   search_timeout_ms
 } from '../constants.js';
 
@@ -33,6 +34,11 @@ export function connect_sse(client_id, on_event) {
   event_source.addEventListener('advisory_alert', (e) => {
     const data = JSON.parse(e.data);
     on_event('advisory_alert', data);
+  });
+
+  event_source.addEventListener('window_update', (e) => {
+    const data = JSON.parse(e.data);
+    on_event('window_update', data);
   });
 
   event_source.addEventListener('active_update', (e) => {
@@ -84,6 +90,20 @@ export async function fetch_history(symbol, limit = 50) {
   const response = await fetch(`${api_base_url}/api/history/${encodeURIComponent(symbol)}?limit=${limit}`);
   if (!response.ok) return [];
   return response.json();
+}
+
+export async function fetch_advisories(limit = advisory_history_limit) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), search_timeout_ms);
+  try {
+    const response = await fetch(`${api_base_url}/api/advisories?limit=${limit}`, { signal: controller.signal });
+    if (!response.ok) return [];
+    return await response.json();
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function search_symbols(query = '', limit = default_symbol_search_limit, external_signal = null) {

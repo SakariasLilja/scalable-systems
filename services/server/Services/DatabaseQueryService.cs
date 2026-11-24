@@ -10,6 +10,8 @@ namespace Trading.Server.Services;
 public interface IDatabaseQueryService
 {
     Task<IReadOnlyList<FinalizedWindowRecord>> GetHistoryAsync(string symbol, int limit, CancellationToken ct = default);
+    Task<IReadOnlyList<AdvisoryRecord>> GetRecentAdvisoriesAsync(int limit, CancellationToken ct = default);
+    Task<(int KnownSymbols, DateTime? LatestSimulationTime)> GetStatusSummaryAsync(CancellationToken ct = default);
     Task<IReadOnlyList<string>> SearchSymbolsAsync(string? query, int limit, CancellationToken ct = default);
     Task<IReadOnlyList<string>> GetMarketsAsync(CancellationToken ct = default);
     Task<IReadOnlyList<string>> GetSymbolsByMarketAsync(string market, string? query, int limit, CancellationToken ct = default);
@@ -28,7 +30,11 @@ public class DatabaseQueryService(
     private readonly ConcurrentDictionary<string, byte> liveSymbols = new(StringComparer.OrdinalIgnoreCase);
     private readonly object timeLock = new();
     private readonly object marketCacheLock = new();
+    private readonly object statusCacheLock = new();
     private DateTime? latestSimulationTime;
+    private int cachedDbSymbolCount;
+    private DateTime? cachedDbLatestTime;
+    private DateTime cachedDbStatusAtUtc = DateTime.MinValue;
     private IReadOnlyList<string> cachedDbMarkets = Array.Empty<string>();
     private DateTime cachedDbMarketsAtUtc = DateTime.MinValue;
     private readonly ConcurrentDictionary<string, (IReadOnlyList<string> Symbols, DateTime CachedAtUtc)> cachedDbMarketSymbols = new(StringComparer.OrdinalIgnoreCase);
@@ -75,6 +81,104 @@ public class DatabaseQueryService(
         {
             latestSimulationTime = null;
         }
+        lock (statusCacheLock)
+        {
+            cachedDbSymbolCount = 0;
+            cachedDbLatestTime = null;
+            cachedDbStatusAtUtc = DateTime.MinValue;
+        }
+    }
+
+    public async Task<IReadOnlyList<AdvisoryRecord>> GetRecentAdvisoriesAsync(int limit, CancellationToken ct = default)
+    {
+        int effectiveLimit = Math.Clamp(limit <= 0 ? Constants.DefaultAdvisoriesLimit : limit, 1, Constants.MaxAdvisoriesLimit);
+        var records = new List<AdvisoryRecord>();
+
+        try
+        {
+            await using var conn = new NpgsqlConnection(BuildConnectionString());
+            await conn.OpenAsync(ct);
+
+            await using var cmd = new NpgsqlCommand(
+                "SELECT symbol_id, buy_signal, sell_signal, last_price, ema_38, ema_100, window_end " +
+                "FROM trading_windows WHERE buy_signal = TRUE OR sell_signal = TRUE " +
+                "ORDER BY window_end DESC LIMIT @lim;", conn);
+
+            cmd.Parameters.AddWithValue("@lim", effectiveLimit);
+
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                bool buy = reader.GetBoolean(1);
+                bool sell = reader.GetBoolean(2);
+                string alertType = buy ? "BUY" : sell ? "SELL" : "NONE";
+                if (alertType == "NONE") continue;
+
+                records.Add(new AdvisoryRecord(
+                    reader.GetString(0),
+                    alertType,
+                    reader.GetDouble(3),
+                    reader.GetDouble(4),
+                    reader.GetDouble(5),
+                    reader.GetDateTime(6)
+                ));
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Could not fetch recent advisories from TimescaleDB");
+        }
+
+        return records;
+    }
+
+    public async Task<(int KnownSymbols, DateTime? LatestSimulationTime)> GetStatusSummaryAsync(CancellationToken ct = default)
+    {
+        int liveCount = liveSymbols.Count;
+        DateTime? liveTime = LatestSimulationTime;
+        if (liveCount > 0)
+        {
+            return (liveCount, liveTime);
+        }
+
+        lock (statusCacheLock)
+        {
+            if ((DateTime.UtcNow - cachedDbStatusAtUtc).TotalSeconds < Constants.MarketDbCacheTtlSeconds)
+            {
+                return (cachedDbSymbolCount, cachedDbLatestTime);
+            }
+        }
+
+        int dbCount = 0;
+        DateTime? dbLatest = null;
+        try
+        {
+            await using var conn = new NpgsqlConnection(BuildConnectionString());
+            await conn.OpenAsync(ct);
+
+            await using var cmd = new NpgsqlCommand(
+                "SELECT COUNT(DISTINCT symbol_id), MAX(window_end) FROM trading_windows;", conn);
+
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            if (await reader.ReadAsync(ct))
+            {
+                dbCount = reader.IsDBNull(0) ? 0 : (int)reader.GetInt64(0);
+                dbLatest = reader.IsDBNull(1) ? null : reader.GetDateTime(1);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Could not fetch status summary from TimescaleDB");
+        }
+
+        lock (statusCacheLock)
+        {
+            cachedDbSymbolCount = dbCount;
+            cachedDbLatestTime = dbLatest;
+            cachedDbStatusAtUtc = DateTime.UtcNow;
+        }
+
+        return (dbCount, dbLatest);
     }
 
     public static IReadOnlyList<string> FilterSymbols(IEnumerable<string> symbols, string? query, int limit)

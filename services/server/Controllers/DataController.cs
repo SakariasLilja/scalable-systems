@@ -32,13 +32,14 @@ public class DataController(
     }
 
     [HttpGet("/api/status")]
-    public IActionResult GetStatus()
+    public async Task<IActionResult> GetStatus(CancellationToken ct)
     {
+        var (knownSymbols, latestSimulationTime) = await dbQueryService.GetStatusSummaryAsync(ct);
         return Ok(new
         {
             connectedClients = sseService.ActiveConnectionCount,
-            knownSymbols = dbQueryService.LiveSymbolCount,
-            latestSimulationTime = dbQueryService.LatestSimulationTime
+            knownSymbols,
+            latestSimulationTime
         });
     }
 

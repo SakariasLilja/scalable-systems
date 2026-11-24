@@ -42,6 +42,49 @@ public class WindowProcessor : IWindowProcessor
         var tickWindowEnd = tickWindowStart.AddMinutes(Constants.WindowDurationMinutes);
         double currentPrice = (double)tick.Last.Value;
 
+        if (currentPrice <= 0.0)
+        {
+            if (!states.TryGetValue(tick.Id, out var existingState))
+            {
+                return null;
+            }
+
+            lock (existingState)
+            {
+                if (tickWindowStart <= existingState.WindowStart)
+                {
+                    return null;
+                }
+
+                double closePrice = existingState.LastPrice;
+                double prevEma38 = existingState.Ema38;
+                double prevEma100 = existingState.Ema100;
+
+                double newEma38 = EmaCalculator.CalculateShortEma(closePrice, prevEma38);
+                double newEma100 = EmaCalculator.CalculateLongEma(closePrice, prevEma100);
+
+                var (buySignal, sellSignal) = EmaCalculator.EvaluateBreakout(newEma38, newEma100, prevEma38, prevEma100);
+
+                var record = new FinalizedWindowRecord(
+                    tick.Id,
+                    existingState.WindowStart,
+                    existingState.WindowEnd,
+                    newEma38,
+                    newEma100,
+                    closePrice,
+                    buySignal,
+                    sellSignal
+                );
+
+                existingState.WindowStart = tickWindowStart;
+                existingState.WindowEnd = tickWindowEnd;
+                existingState.Ema38 = newEma38;
+                existingState.Ema100 = newEma100;
+
+                return record;
+            }
+        }
+
         var state = states.GetOrAdd(tick.Id, _ => new SymbolState
         {
             WindowStart = tickWindowStart,
