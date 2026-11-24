@@ -49,13 +49,13 @@
   function load_initial_followed_markets() {
     try {
       const cached = localStorage.getItem(followed_markets_storage_key);
-      if (cached) {
+      if (cached !== null) {
         const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) return { markets: parsed, has_custom: true };
       }
     } catch {
     }
-    return [];
+    return { markets: [], has_custom: false };
   }
 
   function save_followed_markets(markets) {
@@ -72,10 +72,12 @@
     return symbol.slice(dot + 1).toUpperCase();
   }
 
+  const initial_followed = load_initial_followed_markets();
   let client_id = '';
   let event_source = null;
   let tracked_symbols = load_initial_tracked_symbols();
-  let followed_markets = load_initial_followed_markets();
+  let followed_markets = initial_followed.markets;
+  let has_custom_followed_markets = initial_followed.has_custom;
   let available_markets = [];
   let symbol_data = {};
   let latest_ticks = {};
@@ -349,6 +351,7 @@
   function handle_toggle_follow_market(event) {
     const market = event.detail.market;
     if (!market) return;
+    has_custom_followed_markets = true;
     if (followed_markets.includes(market)) {
       followed_markets = followed_markets.filter((m) => m !== market);
     } else {
@@ -359,7 +362,13 @@
 
   function handle_markets_loaded(event) {
     available_markets = Array.isArray(event.detail.markets) ? event.detail.markets : [];
+    if (!has_custom_followed_markets && available_markets.length > 0) {
+      followed_markets = [...available_markets];
+    }
   }
+
+  $: buy_advisories = advisory_items.filter((item) => item.type === 'BUY');
+  $: sell_advisories = advisory_items.filter((item) => item.type === 'SELL');
 
   async function handle_advisory_action(event) {
     await remove_advisory(event.detail.symbol);
@@ -408,7 +417,49 @@
       on:markets_loaded={handle_markets_loaded}
     />
 
+    <div class="advisory-toolbar">
+      <div class="follow-group">
+        <span class="follow-label">Follow Markets</span>
+        <div class="follow-pills">
+          {#if available_markets.length === 0}
+            <span class="follow-hint">Tracked stocks always alert</span>
+          {:else}
+            {#each available_markets as market (market)}
+              <button
+                type="button"
+                class="follow-pill"
+                class:followed={followed_markets.includes(market)}
+                on:click={() => handle_toggle_follow_market({ detail: { market } })}
+              >
+                {market}
+              </button>
+            {/each}
+          {/if}
+        </div>
+      </div>
+      <div class="header-actions">
+        {#if advisory_items.length > 0}
+          <button type="button" class="dismiss-all-btn" on:click={handle_dismiss_all_advisories}>Dismiss All</button>
+        {/if}
+        <button type="button" class="history-btn" on:click={() => (is_history_modal_open = true)}>History Log</button>
+      </div>
+    </div>
+
     <div class="workspace-grid">
+      <AdvisoryPanel
+        title="Buy Advisories"
+        empty_text="No active BUY advisories. Signals appear here for 120s."
+        advisory_items={buy_advisories}
+        {symbol_data}
+        {latest_ticks}
+        {tracked_symbols}
+        on:select_active={handle_open_active}
+        on:track_symbol={handle_add_symbol}
+        on:untrack_symbol={handle_untrack_symbol}
+        on:dismiss_advisory={handle_dismiss_advisory}
+        on:advisory_action={handle_advisory_action}
+      />
+
       <section class="tracked-column">
         <TrackedList
           {tracked_symbols}
@@ -421,20 +472,17 @@
       </section>
 
       <AdvisoryPanel
-        {advisory_items}
+        title="Sell Advisories"
+        empty_text="No active SELL advisories. Signals appear here for 120s."
+        advisory_items={sell_advisories}
         {symbol_data}
         {latest_ticks}
         {tracked_symbols}
-        {available_markets}
-        {followed_markets}
         on:select_active={handle_open_active}
         on:track_symbol={handle_add_symbol}
         on:untrack_symbol={handle_untrack_symbol}
         on:dismiss_advisory={handle_dismiss_advisory}
-        on:dismiss_all_advisories={handle_dismiss_all_advisories}
-        on:toggle_follow_market={handle_toggle_follow_market}
         on:advisory_action={handle_advisory_action}
-        on:open_history={() => (is_history_modal_open = true)}
       />
     </div>
   </div>
@@ -453,6 +501,7 @@
     <AdvisoryHistoryModal
       {session_advisories}
       {tracked_symbols}
+      on:select_active={(e) => { is_history_modal_open = false; handle_open_active(e); }}
       on:add_symbol={handle_add_symbol}
       on:untrack_symbol={handle_untrack_symbol}
       on:close={() => (is_history_modal_open = false)}

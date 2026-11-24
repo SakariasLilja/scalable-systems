@@ -84,7 +84,14 @@
                 </td>
                 <td>{item.closePrice !== undefined && item.closePrice !== null ? Number(item.closePrice).toFixed(2) : '--'}</td>
                 <td class="time-cell">{format_eu_datetime(item.time)}</td>
-                <td>
+                <td class="action-cell">
+                  <button
+                    type="button"
+                    class="chart-btn"
+                    on:click={() => dispatch('select_active', { symbol: item.symbol })}
+                  >
+                    Open Chart
+                  </button>
                   <button
                     type="button"
                     class="track-btn"

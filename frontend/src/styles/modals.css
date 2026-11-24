@@ -109,6 +109,23 @@
   font-weight: 800;
 }
 
+.history-modal .action-cell {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.history-modal .chart-btn {
+  padding: 0.3rem 0.65rem;
+  border-radius: 4px;
+  border: none;
+  background-color: #2563eb;
+  color: #ffffff;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 .history-modal .track-btn {
   padding: 0.3rem 0.65rem;
   border-radius: 4px;

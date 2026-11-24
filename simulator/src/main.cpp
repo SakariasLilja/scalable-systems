@@ -257,7 +257,9 @@ void print_stats_line(LiveStatsState& state,
                       const sim::ShardedPool& pool,
                       std::chrono::steady_clock::time_point start_tp,
                       std::chrono::steady_clock::time_point& prev_tp,
-                      uint64_t& prev_completed) {
+                      uint64_t& prev_completed,
+                      double* prev_sim_sec = nullptr,
+                      double* min_speedup = nullptr) {
     auto now = std::chrono::steady_clock::now();
     double interval_sec = std::chrono::duration<double>(now - prev_tp).count();
     double total_sec = std::chrono::duration<double>(now - start_tp).count();
@@ -272,6 +274,16 @@ void print_stats_line(LiveStatsState& state,
     double sim_sec = static_cast<double>(state.sim_elapsed_ms.load(std::memory_order_relaxed)) /
                      static_cast<double>(sim::MS_PER_SECOND);
     double speedup = (total_sec > 0.0 && sim_sec > 0.0) ? (sim_sec / total_sec) : 0.0;
+    if (prev_sim_sec && min_speedup) {
+        double interval_sim_sec = sim_sec - *prev_sim_sec;
+        if (interval_sec > 0.0 && interval_sim_sec > 0.0) {
+            double interval_speedup = interval_sim_sec / interval_sec;
+            if (interval_speedup < *min_speedup) {
+                *min_speedup = interval_speedup;
+            }
+        }
+        *prev_sim_sec = sim_sec;
+    }
 
     std::string filename;
     {
@@ -301,10 +313,12 @@ int run_stream_mode(const CliOptions& opts,
     std::mutex stats_mu;
     std::condition_variable stats_cv;
     bool stats_done = false;
+    double min_speedup = std::numeric_limits<double>::infinity();
 
     std::thread stats_thread([&]() {
         auto prev_tp = start_tp;
         uint64_t prev_completed = 0;
+        double prev_sim_sec = 0.0;
         std::unique_lock<std::mutex> lock(stats_mu);
         while (!stats_done && !g_stop_requested.load(std::memory_order_relaxed)) {
             stats_cv.wait_for(lock, std::chrono::seconds(sim::STATS_INTERVAL_SECONDS), [&]() {
@@ -314,7 +328,7 @@ int run_stream_mode(const CliOptions& opts,
                 break;
             }
             lock.unlock();
-            print_stats_line(stats, pool, start_tp, prev_tp, prev_completed);
+            print_stats_line(stats, pool, start_tp, prev_tp, prev_completed, &prev_sim_sec, &min_speedup);
             lock.lock();
         }
     });
@@ -414,6 +428,7 @@ int run_stream_mode(const CliOptions& opts,
     double sim_sec = static_cast<double>(completed_days_sim_ms) /
                      static_cast<double>(sim::MS_PER_SECOND);
     double speedup = (total_sec > 0.0 && sim_sec > 0.0) ? (sim_sec / total_sec) : 0.0;
+    double reported_min_speedup = std::isfinite(min_speedup) ? min_speedup : speedup;
 
     std::cout << std::fixed << std::setprecision(2)
               << "[summary] files=" << files.size()
@@ -423,7 +438,8 @@ int run_stream_mode(const CliOptions& opts,
               << " wall=" << total_sec << "s"
               << " sim=" << sim_sec << "s"
               << " avg_req/s=" << std::setprecision(1) << rps
-              << " speedup=" << std::setprecision(2) << speedup << "x\n";
+              << " speedup=" << std::setprecision(2) << speedup << "x"
+              << " min_speedup=" << std::setprecision(2) << reported_min_speedup << "x\n";
 
     return (read_error || errors > 0) ? 1 : 0;
 }
