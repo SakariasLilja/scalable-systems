@@ -25,7 +25,7 @@ public class ServerResetAndSseTests
         public DateTime? StubLatestTime { get; set; }
         public IReadOnlyList<AdvisoryRecord> StubAdvisories { get; set; } = [];
 
-        public Task<IReadOnlyList<FinalizedWindowRecord>> GetHistoryAsync(string symbol, int limit, CancellationToken ct = default) =>
+        public Task<IReadOnlyList<FinalizedWindowRecord>> GetHistoryAsync(string symbol, int limit, DateTime? before = null, CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<FinalizedWindowRecord>>([]);
 
         public Task<IReadOnlyList<AdvisoryRecord>> GetRecentAdvisoriesAsync(int limit, CancellationToken ct = default)

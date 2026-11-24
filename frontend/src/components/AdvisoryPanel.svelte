@@ -1,4 +1,5 @@
 <script>
+  import { createEventDispatcher } from 'svelte';
   import '../styles/advisory_panel.css';
   import StockCard from './StockCard.svelte';
 
@@ -8,6 +9,10 @@
   export let symbol_data = {};
   export let latest_ticks = {};
   export let tracked_symbols = [];
+  export let auto_action_label = '';
+  export let auto_action_enabled = false;
+
+  const dispatch = createEventDispatcher();
 </script>
 
 <aside class="advisory-panel">
@@ -16,7 +21,23 @@
       <h2>{title}</h2>
       <span class="count-pill">{advisory_items.length}</span>
     </div>
+    {#if advisory_items.length > 0}
+      <button type="button" class="panel-dismiss-btn" on:click={() => dispatch('dismiss_all')}>Dismiss All</button>
+    {/if}
   </div>
+
+  {#if auto_action_label}
+    <div class="panel-toggle-row">
+      <button
+        type="button"
+        class="auto-toggle-btn"
+        class:enabled={auto_action_enabled}
+        on:click={() => dispatch('toggle_auto_action')}
+      >
+        {auto_action_label}: {auto_action_enabled ? 'ON' : 'OFF'}
+      </button>
+    </div>
+  {/if}
 
   {#if advisory_items.length === 0}
     <div class="panel-empty">{empty_text}</div>

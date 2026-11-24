@@ -31,6 +31,8 @@ public class WorkerPipelineTests
             return ValueTask.CompletedTask;
         }
 
+        public Task<int> FlushAsync(CancellationToken ct = default) => Task.FromResult(0);
+
         public void Reset() => ResetCalled = true;
     }
 

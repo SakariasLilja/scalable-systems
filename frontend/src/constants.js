@@ -22,6 +22,9 @@ export const search_debounce_ms = 150;
 export const search_timeout_ms = 3000;
 export const tracked_symbols_storage_key = 'tick_detector_tracked_symbols';
 export const followed_markets_storage_key = 'tick_detector_followed_markets';
+export const auto_track_buy_storage_key = 'tick_detector_auto_track_buy';
+export const auto_untrack_sell_storage_key = 'tick_detector_auto_untrack_sell';
+export const sell_tracked_only_storage_key = 'tick_detector_sell_tracked_only';
 
 export const chart_colors = {
   ema_38: '#38bdf8',

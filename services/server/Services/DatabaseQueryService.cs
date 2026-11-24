@@ -9,7 +9,7 @@ namespace Trading.Server.Services;
 
 public interface IDatabaseQueryService
 {
-    Task<IReadOnlyList<FinalizedWindowRecord>> GetHistoryAsync(string symbol, int limit, CancellationToken ct = default);
+    Task<IReadOnlyList<FinalizedWindowRecord>> GetHistoryAsync(string symbol, int limit, DateTime? before = null, CancellationToken ct = default);
     Task<IReadOnlyList<AdvisoryRecord>> GetRecentAdvisoriesAsync(int limit, CancellationToken ct = default);
     Task<(int KnownSymbols, DateTime? LatestSimulationTime)> GetStatusSummaryAsync(CancellationToken ct = default);
     Task<IReadOnlyList<string>> SearchSymbolsAsync(string? query, int limit, CancellationToken ct = default);
@@ -207,7 +207,7 @@ public class DatabaseQueryService(
             .ToList();
     }
 
-    public async Task<IReadOnlyList<FinalizedWindowRecord>> GetHistoryAsync(string symbol, int limit, CancellationToken ct = default)
+    public async Task<IReadOnlyList<FinalizedWindowRecord>> GetHistoryAsync(string symbol, int limit, DateTime? before = null, CancellationToken ct = default)
     {
         int effectiveLimit = limit <= 0 ? Constants.DefaultHistoryLimit : limit;
         var records = new List<FinalizedWindowRecord>();
@@ -217,11 +217,18 @@ public class DatabaseQueryService(
             await using var conn = new NpgsqlConnection(BuildConnectionString());
             await conn.OpenAsync(ct);
 
-            await using var cmd = new NpgsqlCommand(
-                "SELECT symbol_id, window_start, window_end, ema_38, ema_100, last_price, buy_signal, sell_signal " +
-                "FROM trading_windows WHERE symbol_id = @sym ORDER BY window_start DESC LIMIT @lim;", conn);
+            string sql = before.HasValue
+                ? "SELECT symbol_id, window_start, window_end, ema_38, ema_100, last_price, buy_signal, sell_signal " +
+                  "FROM trading_windows WHERE symbol_id = @sym AND window_start < @before ORDER BY window_start DESC LIMIT @lim;"
+                : "SELECT symbol_id, window_start, window_end, ema_38, ema_100, last_price, buy_signal, sell_signal " +
+                  "FROM trading_windows WHERE symbol_id = @sym ORDER BY window_start DESC LIMIT @lim;";
 
+            await using var cmd = new NpgsqlCommand(sql, conn);
             cmd.Parameters.AddWithValue("@sym", symbol);
+            if (before.HasValue)
+            {
+                cmd.Parameters.AddWithValue("@before", DateTime.SpecifyKind(before.Value.ToUniversalTime(), DateTimeKind.Utc));
+            }
             cmd.Parameters.AddWithValue("@lim", effectiveLimit);
 
             await using var reader = await cmd.ExecuteReaderAsync(ct);

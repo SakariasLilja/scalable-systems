@@ -180,4 +180,25 @@ public class WindowAndEmaTests
         Assert.NotNull(win2);
         Assert.Equal(100.0, win2.LastPrice, 6);
     }
+
+    [Fact]
+    public void FlushAll_FinalizesRemainingOpenWindowsAndClearsState()
+    {
+        var processor = new WindowProcessor();
+        var date = new DateOnly(2021, 11, 12);
+
+        Assert.Null(processor.ProcessTick(new MinimalTradingEntry
+        {
+            Id = "SAP.ETR",
+            Last = 120m,
+            TradingDate = date,
+            TradingTime = new TimeOnly(22, 36, 10)
+        }));
+
+        var flushed = processor.FlushAll();
+        Assert.Single(flushed);
+        Assert.Equal("SAP.ETR", flushed[0].SymbolId);
+        Assert.Equal(120.0, flushed[0].LastPrice, 6);
+        Assert.Empty(processor.FlushAll());
+    }
 }

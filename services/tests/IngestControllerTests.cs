@@ -21,6 +21,8 @@ public class IngestControllerTests
             return ValueTask.CompletedTask;
         }
 
+        public Task<int> FlushAsync(CancellationToken ct = default) => Task.FromResult(0);
+
         public void Reset() => Enqueued.Clear();
     }
 

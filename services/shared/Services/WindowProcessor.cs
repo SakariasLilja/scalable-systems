@@ -7,6 +7,7 @@ namespace Trading.Shared.Services;
 public interface IWindowProcessor
 {
     FinalizedWindowRecord? ProcessTick(MinimalTradingEntry tick);
+    IReadOnlyList<FinalizedWindowRecord> FlushAll();
     void Reset();
 }
 
@@ -26,6 +27,38 @@ public class WindowProcessor : IWindowProcessor
     private readonly ConcurrentDictionary<string, SymbolState> states = new();
 
     public void Reset() => states.Clear();
+
+    public IReadOnlyList<FinalizedWindowRecord> FlushAll()
+    {
+        var results = new List<FinalizedWindowRecord>();
+        foreach (var (symbolId, state) in states)
+        {
+            lock (state)
+            {
+                if (state.LastPrice <= 0.0) continue;
+                double closePrice = state.LastPrice;
+                double prevEma38 = state.Ema38;
+                double prevEma100 = state.Ema100;
+
+                double newEma38 = EmaCalculator.CalculateShortEma(closePrice, prevEma38);
+                double newEma100 = EmaCalculator.CalculateLongEma(closePrice, prevEma100);
+                var (buySignal, sellSignal) = EmaCalculator.EvaluateBreakout(newEma38, newEma100, prevEma38, prevEma100);
+
+                results.Add(new FinalizedWindowRecord(
+                    symbolId,
+                    state.WindowStart,
+                    state.WindowEnd,
+                    newEma38,
+                    newEma100,
+                    closePrice,
+                    buySignal,
+                    sellSignal
+                ));
+            }
+        }
+        states.Clear();
+        return results;
+    }
 
     public FinalizedWindowRecord? ProcessTick(MinimalTradingEntry tick)
     {

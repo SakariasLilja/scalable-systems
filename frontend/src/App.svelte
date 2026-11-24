@@ -24,6 +24,9 @@
     advisory_audio_url,
     tracked_symbols_storage_key,
     followed_markets_storage_key,
+    auto_track_buy_storage_key,
+    auto_untrack_sell_storage_key,
+    sell_tracked_only_storage_key,
     status_poll_interval_ms
   } from './constants.js';
 
@@ -72,12 +75,31 @@
     return symbol.slice(dot + 1).toUpperCase();
   }
 
+  function load_bool_pref(key, fallback = false) {
+    try {
+      const val = localStorage.getItem(key);
+      if (val !== null) return val === 'true';
+    } catch {
+    }
+    return fallback;
+  }
+
+  function save_bool_pref(key, value) {
+    try {
+      localStorage.setItem(key, value ? 'true' : 'false');
+    } catch {
+    }
+  }
+
   const initial_followed = load_initial_followed_markets();
   let client_id = '';
   let event_source = null;
   let tracked_symbols = load_initial_tracked_symbols();
   let followed_markets = initial_followed.markets;
   let has_custom_followed_markets = initial_followed.has_custom;
+  let auto_track_on_buy = load_bool_pref(auto_track_buy_storage_key, false);
+  let auto_untrack_on_sell = load_bool_pref(auto_untrack_sell_storage_key, false);
+  let sell_tracked_only = load_bool_pref(sell_tracked_only_storage_key, false);
   let available_markets = [];
   let symbol_data = {};
   let latest_ticks = {};
@@ -187,9 +209,11 @@
       if (time) latest_sim_time = time;
       session_advisories = [{ symbol, type, closePrice, ema38, ema100, time }, ...session_advisories].slice(0, advisory_history_limit);
 
-      const should_alert = !has_custom_followed_markets ||
-        tracked_symbols.includes(symbol) ||
-        followed_markets.includes(extract_market(symbol));
+      const is_tracked = tracked_symbols.includes(symbol);
+      const market_allowed = !has_custom_followed_markets || followed_markets.includes(extract_market(symbol));
+      const should_alert = type === 'SELL' && sell_tracked_only
+        ? is_tracked
+        : (is_tracked || market_allowed);
       if (!should_alert) {
         return false;
       }
@@ -336,18 +360,33 @@
     await remove_advisory(event.detail.symbol);
   }
 
-  async function handle_dismiss_all_advisories() {
-    const symbols = advisory_items.map((item) => item.symbol);
-    Object.values(advisory_timers).forEach(clearTimeout);
-    advisory_timers = {};
-    advisory_items = [];
+  async function handle_dismiss_advisories_by_type(advisory_type) {
+    const to_remove = advisory_items.filter((item) => item.type === advisory_type);
+    const symbols = to_remove.map((item) => item.symbol);
     for (const sym of symbols) {
+      clear_advisory_timer(sym);
       if (symbol_data[sym]) {
         symbol_data[sym] = { ...symbol_data[sym], recent_alert: null };
       }
     }
+    advisory_items = advisory_items.filter((item) => item.type !== advisory_type);
     symbol_data = symbol_data;
     await Promise.all(symbols.map((sym) => sync_symbol_subscription(sym)));
+  }
+
+  function handle_toggle_auto_track_buy() {
+    auto_track_on_buy = !auto_track_on_buy;
+    save_bool_pref(auto_track_buy_storage_key, auto_track_on_buy);
+  }
+
+  function handle_toggle_auto_untrack_sell() {
+    auto_untrack_on_sell = !auto_untrack_on_sell;
+    save_bool_pref(auto_untrack_sell_storage_key, auto_untrack_on_sell);
+  }
+
+  function handle_toggle_sell_tracked_only() {
+    sell_tracked_only = !sell_tracked_only;
+    save_bool_pref(sell_tracked_only_storage_key, sell_tracked_only);
   }
 
   function handle_toggle_follow_market(event) {
@@ -373,7 +412,13 @@
   $: sell_advisories = advisory_items.filter((item) => item.type === 'SELL');
 
   async function handle_advisory_action(event) {
-    await remove_advisory(event.detail.symbol);
+    const { symbol, type } = event.detail;
+    await remove_advisory(symbol);
+    if (type === 'BUY' && auto_track_on_buy && !tracked_symbols.includes(symbol)) {
+      await handle_add_symbol({ detail: { symbol } });
+    } else if (type === 'SELL' && auto_untrack_on_sell && tracked_symbols.includes(symbol)) {
+      await handle_untrack_symbol({ detail: { symbol } });
+    }
   }
 
   onMount(() => {
@@ -437,12 +482,17 @@
               </button>
             {/each}
           {/if}
+          <button
+            type="button"
+            class="follow-pill"
+            class:followed={sell_tracked_only}
+            on:click={handle_toggle_sell_tracked_only}
+          >
+            Sell: Tracked Only
+          </button>
         </div>
       </div>
       <div class="header-actions">
-        {#if advisory_items.length > 0}
-          <button type="button" class="dismiss-all-btn" on:click={handle_dismiss_all_advisories}>Dismiss All</button>
-        {/if}
         <button type="button" class="history-btn" on:click={() => (is_history_modal_open = true)}>History Log</button>
       </div>
     </div>
@@ -455,6 +505,10 @@
         {symbol_data}
         {latest_ticks}
         {tracked_symbols}
+        auto_action_label="Auto-track on Buy"
+        auto_action_enabled={auto_track_on_buy}
+        on:dismiss_all={() => handle_dismiss_advisories_by_type('BUY')}
+        on:toggle_auto_action={handle_toggle_auto_track_buy}
         on:select_active={handle_open_active}
         on:track_symbol={handle_add_symbol}
         on:untrack_symbol={handle_untrack_symbol}
@@ -480,6 +534,10 @@
         {symbol_data}
         {latest_ticks}
         {tracked_symbols}
+        auto_action_label="Auto-untrack on Sell"
+        auto_action_enabled={auto_untrack_on_sell}
+        on:dismiss_all={() => handle_dismiss_advisories_by_type('SELL')}
+        on:toggle_auto_action={handle_toggle_auto_untrack_sell}
         on:select_active={handle_open_active}
         on:track_symbol={handle_add_symbol}
         on:untrack_symbol={handle_untrack_symbol}

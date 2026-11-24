@@ -9,9 +9,9 @@ namespace Trading.Server.Controllers;
 public class HistoryController(IDatabaseQueryService dbQueryService) : ControllerBase
 {
     [HttpGet("{symbol}")]
-    public async Task<IActionResult> GetHistory(string symbol, [FromQuery] int limit = Constants.DefaultHistoryLimit, CancellationToken ct = default)
+    public async Task<IActionResult> GetHistory(string symbol, [FromQuery] int limit = Constants.DefaultHistoryLimit, [FromQuery] DateTime? before = null, CancellationToken ct = default)
     {
-        var records = await dbQueryService.GetHistoryAsync(symbol, limit, ct);
+        var records = await dbQueryService.GetHistoryAsync(symbol, limit, before, ct);
         return Ok(records);
     }
 

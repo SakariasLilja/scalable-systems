@@ -86,8 +86,12 @@ export async function set_symbol_state(client_id, symbol, state) {
   }
 }
 
-export async function fetch_history(symbol, limit = 50) {
-  const response = await fetch(`${api_base_url}/api/history/${encodeURIComponent(symbol)}?limit=${limit}`);
+export async function fetch_history(symbol, limit = 50, before = null) {
+  let url = `${api_base_url}/api/history/${encodeURIComponent(symbol)}?limit=${limit}`;
+  if (before) {
+    url += `&before=${encodeURIComponent(before)}`;
+  }
+  const response = await fetch(url);
   if (!response.ok) return [];
   return response.json();
 }

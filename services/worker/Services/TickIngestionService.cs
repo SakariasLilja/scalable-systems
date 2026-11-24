@@ -10,6 +10,7 @@ namespace Trading.Worker.Services;
 public interface ITickIngestionService
 {
     ValueTask EnqueueAsync(MinimalTradingEntry tick, CancellationToken ct = default);
+    Task<int> FlushAsync(CancellationToken ct = default);
     void Reset();
     long IngestedCount { get; }
 }
@@ -38,6 +39,33 @@ public class TickIngestionService(
     {
         await channel.Writer.WriteAsync(tick, ct);
         Interlocked.Increment(ref ingestedCount);
+    }
+
+    public async Task<int> FlushAsync(CancellationToken ct = default)
+    {
+        IReadOnlyList<FinalizedWindowRecord> flushed;
+        CancellationToken publishResetToken;
+        lock (processLock)
+        {
+            flushed = windowProcessor.FlushAll();
+            foreach (var record in flushed)
+            {
+                dbBatchWriter.Enqueue(record);
+            }
+            publishResetToken = resetCts.Token;
+        }
+
+        if (flushed.Count > 0)
+        {
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, publishResetToken);
+            foreach (var record in flushed)
+            {
+                await windowPublisher.PublishWindowAsync(record, linkedCts.Token);
+            }
+        }
+
+        logger.LogInformation("Flushed {Count} open windows at end of stream", flushed.Count);
+        return flushed.Count;
     }
 
     public void Reset()

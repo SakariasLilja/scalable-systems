@@ -408,6 +408,19 @@ int run_stream_mode(const CliOptions& opts,
     } else {
         pool.wait_idle();
         pool.shutdown_and_join();
+
+        sim::HttpUrl flush_url = target_url;
+        if (!flush_url.path.empty() && flush_url.path.back() == '/') {
+            flush_url.path += "flush";
+        } else {
+            flush_url.path += "/flush";
+        }
+        sim::HttpKeepAliveSender flush_sender(flush_url);
+        int shards = std::max(1, opts.worker_shards);
+        for (int s = 0; s < shards; ++s) {
+            std::optional<int> shard_hdr = (shards > 1) ? std::optional<int>(s) : std::nullopt;
+            flush_sender.post_json("{}", shard_hdr);
+        }
     }
 
     {

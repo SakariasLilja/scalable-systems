@@ -45,6 +45,13 @@ public class IngestController(
         return Accepted();
     }
 
+    [HttpPost("/api/ingest/flush")]
+    public async Task<IActionResult> Flush(CancellationToken ct)
+    {
+        int flushed = await ingestionService.FlushAsync(ct);
+        return Ok(new { flushed });
+    }
+
     [HttpPost("/internal/reset")]
     public IActionResult Reset()
     {
