@@ -15,7 +15,7 @@ if [[ $# -ge 1 && "$1" != -* ]]; then
   shift
 fi
 
-CONCURRENCY="4"
+CONCURRENCY="16"
 if [[ $# -ge 1 && "$1" != -* ]]; then
   CONCURRENCY="$1"
   shift

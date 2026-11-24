@@ -18,7 +18,7 @@ for arg in "$@"; do
   fi
 done
 
-CONCURRENCY="4"
+CONCURRENCY="16"
 if [[ $# -ge 1 && "$1" != -* ]]; then
   CONCURRENCY="$1"
   shift
@@ -30,10 +30,24 @@ if [[ $# -ge 1 && "$1" != -* ]]; then
   shift
 fi
 
+HAS_START_TIME=0
+for arg in "$@"; do
+  if [[ "$arg" == "--start-time" || "$arg" == --start-time=* ]]; then
+    HAS_START_TIME=1
+    break
+  fi
+done
+
+EXTRA_ARGS=()
+if [[ "$HAS_START_TIME" -eq 0 ]]; then
+  EXTRA_ARGS+=(--start-time 09:00:00)
+fi
+
 exec "$SIM_BIN" \
   --probe \
   --data-dir "$REPO_ROOT/data" \
   --url "${SIM_URL:-http://localhost:8080/api/ingest}" \
   --concurrency "$CONCURRENCY" \
   --probe-ticks "$PROBE_TICKS" \
+  "${EXTRA_ARGS[@]}" \
   "$@"

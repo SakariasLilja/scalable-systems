@@ -19,6 +19,7 @@
 #include "burst_tracker.hpp"
 #include "constants.hpp"
 #include "csv_json.hpp"
+#include "csv_seeker.hpp"
 #include "day_discovery.hpp"
 #include "http_sender.hpp"
 #include "sharded_pool.hpp"
@@ -37,9 +38,11 @@ struct CliOptions {
     std::string url = sim::DEFAULT_INGEST_URL;
     double speed = sim::DEFAULT_SPEED;
     int concurrency = sim::DEFAULT_CONCURRENCY;
+    int batch_size = sim::DEFAULT_BATCH_SIZE;
     std::string day;
     std::string file;
     std::string start_day;
+    std::optional<int64_t> start_time_ms;
     bool probe = false;
     bool offline = false;
     int64_t bucket_sec = sim::DEFAULT_BURST_BUCKET_SEC;
@@ -59,9 +62,12 @@ void print_usage(const char* prog) {
               << sim::DEFAULT_SPEED << ")\n"
               << "  --concurrency <int>   Sharded keep-alive worker threads (default: "
               << sim::DEFAULT_CONCURRENCY << ")\n"
+              << "  --batch-size <int>    Optional JSON-array batch size per HTTP POST (default: "
+              << sim::DEFAULT_BATCH_SIZE << ")\n"
               << "  --day <dd-mm-yy>      Run a single trading day\n"
               << "  --file <path>         Run an explicit single CSV file\n"
               << "  --start-day <dd-mm-yy> Start from trading day through end of week\n"
+              << "  --start-time <HH:MM[:SS]> Seek to time of day (first day in stream, every day in probe)\n"
               << "  --probe               Measure max-speed ingestion across discovered days\n"
               << "  --offline             With --probe: offline CSV reader & burst speedup probe (no HTTP)\n"
               << "  --bucket-sec <int>    Burst window size in seconds for --offline probe (default: "
@@ -150,6 +156,28 @@ bool parse_args(int argc, char* argv[], CliOptions& opts, std::string& err_msg) 
         } else if (key == "--start-day") {
             if (!next_value(i, arg, val)) return false;
             opts.start_day = std::move(val);
+        } else if (key == "--start-time") {
+            if (!next_value(i, arg, val)) return false;
+            auto parsed_ms = sim::parse_time_of_day_ms(val);
+            if (!parsed_ms.has_value()) {
+                err_msg = "Invalid --start-time value (expected HH:MM or HH:MM:SS): " + val;
+                return false;
+            }
+            opts.start_time_ms = *parsed_ms;
+        } else if (key == "--batch-size") {
+            if (!next_value(i, arg, val)) return false;
+            try {
+                std::size_t pos = 0;
+                int b = std::stoi(val, &pos);
+                if (pos != val.size() || b <= 0) {
+                    err_msg = "Invalid --batch-size value: " + val;
+                    return false;
+                }
+                opts.batch_size = b;
+            } catch (...) {
+                err_msg = "Invalid --batch-size value: " + val;
+                return false;
+            }
         } else if (key == "--bucket-sec") {
             if (!next_value(i, arg, val)) return false;
             try {
@@ -250,7 +278,7 @@ int run_stream_mode(const CliOptions& opts,
                     const sim::HttpUrl& target_url,
                     const std::vector<std::string>& files) {
     LiveStatsState stats;
-    sim::ShardedPool pool(opts.concurrency, target_url, &g_stop_requested);
+    sim::ShardedPool pool(opts.concurrency, target_url, &g_stop_requested, opts.batch_size);
     auto start_tp = std::chrono::steady_clock::now();
 
     std::mutex stats_mu;
@@ -279,7 +307,8 @@ int run_stream_mode(const CliOptions& opts,
     int64_t completed_days_sim_ms = 0;
     bool read_error = false;
 
-    for (const std::string& path : files) {
+    for (std::size_t file_idx = 0; file_idx < files.size(); ++file_idx) {
+        const std::string& path = files[file_idx];
         if (g_stop_requested.load(std::memory_order_relaxed)) {
             break;
         }
@@ -295,7 +324,7 @@ int run_stream_mode(const CliOptions& opts,
 
         {
             std::lock_guard<std::mutex> lock(stats.file_mu);
-            stats.current_filename = std::filesystem::path(path).filename().string();
+            stats.current_filename = sim::extract_date_label(path);
         }
 
         pacer.reset();
@@ -310,6 +339,9 @@ int run_stream_mode(const CliOptions& opts,
             }
             if (headers.empty()) {
                 headers = sim::parse_csv_line(clean);
+                if (file_idx == 0 && opts.start_time_ms.has_value()) {
+                    sim::seek_csv_to_time(in, *opts.start_time_ms, headers);
+                }
                 continue;
             }
 
@@ -383,7 +415,7 @@ int run_probe_mode(const CliOptions& opts,
                    const sim::HttpUrl& target_url,
                    const std::vector<std::string>& files) {
     std::vector<char> io_buf(sim::FILE_STREAM_BUFFER_BYTES);
-    sim::ShardedPool pool(opts.concurrency, target_url, &g_stop_requested);
+    sim::ShardedPool pool(opts.concurrency, target_url, &g_stop_requested, opts.batch_size);
     double min_speedup = std::numeric_limits<double>::infinity();
     std::size_t probed_days = 0;
     uint64_t total_errors = 0;
@@ -407,7 +439,7 @@ int run_probe_mode(const CliOptions& opts,
             return 1;
         }
 
-        std::string filename = std::filesystem::path(path).filename().string();
+        std::string filename = sim::extract_date_label(path);
         LiveStatsState stats;
         {
             std::lock_guard<std::mutex> lock(stats.file_mu);
@@ -450,6 +482,9 @@ int run_probe_mode(const CliOptions& opts,
             }
             if (headers.empty()) {
                 headers = sim::parse_csv_line(clean);
+                if (opts.start_time_ms.has_value()) {
+                    sim::seek_csv_to_time(in, *opts.start_time_ms, headers);
+                }
                 continue;
             }
 
@@ -559,7 +594,7 @@ int run_offline_probe_mode(const CliOptions& opts, const std::vector<std::string
             continue;
         }
 
-        std::string filename = std::filesystem::path(path).filename().string();
+        std::string filename = sim::extract_date_label(path);
         sim::BurstTracker primary_tracker(primary_bucket_ms);
         sim::BurstTracker strict_tracker(strict_bucket_ms);
         int64_t day_rows = 0;
@@ -575,6 +610,9 @@ int run_offline_probe_mode(const CliOptions& opts, const std::vector<std::string
             }
             if (headers.empty()) {
                 headers = sim::parse_csv_line(clean);
+                if (opts.start_time_ms.has_value()) {
+                    sim::seek_csv_to_time(in, *opts.start_time_ms, headers);
+                }
                 continue;
             }
 
