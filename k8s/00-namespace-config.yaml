@@ -11,6 +11,7 @@ metadata:
 data:
   REDIS_CONNECTION: "redis:6379"
   WORKER_URL: "http://worker:8080"
+  WORKER_RESET_URLS: "http://worker-0:8080,http://worker-1:8080,http://worker-2:8080"
   POSTGRES_HOST: "timescaledb"
   POSTGRES_PORT: "5432"
   POSTGRES_DB: "trading_db"

@@ -1,12 +1,14 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: worker
   namespace: trading-system
   labels:
     app: worker
 spec:
-  replicas: 1
+  serviceName: worker-headless
+  replicas: 3
+  podManagementPolicy: Parallel
   selector:
     matchLabels:
       app: worker
@@ -54,6 +56,22 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
+  name: worker-headless
+  namespace: trading-system
+  labels:
+    app: worker
+spec:
+  clusterIP: None
+  selector:
+    app: worker
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
   name: worker
   namespace: trading-system
   labels:
@@ -61,6 +79,51 @@ metadata:
 spec:
   selector:
     app: worker
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: worker-0
+  namespace: trading-system
+  labels:
+    app: worker
+spec:
+  selector:
+    statefulset.kubernetes.io/pod-name: worker-0
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: worker-1
+  namespace: trading-system
+  labels:
+    app: worker
+spec:
+  selector:
+    statefulset.kubernetes.io/pod-name: worker-1
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: worker-2
+  namespace: trading-system
+  labels:
+    app: worker
+spec:
+  selector:
+    statefulset.kubernetes.io/pod-name: worker-2
   ports:
     - name: http
       port: 8080

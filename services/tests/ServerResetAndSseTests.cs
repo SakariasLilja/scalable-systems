@@ -274,4 +274,63 @@ public class ServerResetAndSseTests
         Assert.True(Volatile.Read(ref ((SubscriberProxy)(object)subProxy).SubscribeCalls) >= 4);
         await subscriber.StopAsync(CancellationToken.None);
     }
+
+    private sealed class StubHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> handler) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(handler(request));
+    }
+
+    private sealed class StubHttpClientFactory(HttpClient client) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => client;
+    }
+
+    [Fact]
+    public async Task WorkerResetClient_FansOutToAllConfiguredWorkerShards()
+    {
+        var seen = new List<string>();
+        var handler = new StubHttpMessageHandler(req =>
+        {
+            lock (seen) seen.Add(req.RequestUri!.ToString());
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK);
+        });
+        var client = new HttpClient(handler);
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["WORKER_RESET_URLS"] = "http://worker-0:8080,http://worker-1:8080,http://worker-2:8080"
+            })
+            .Build();
+
+        var resetClient = new WorkerResetClient(new StubHttpClientFactory(client), config, NullLogger<WorkerResetClient>.Instance);
+        var ok = await resetClient.ResetWorkerAsync();
+
+        Assert.True(ok);
+        Assert.Equal(3, seen.Count);
+        Assert.Contains("http://worker-0:8080/internal/reset", seen);
+        Assert.Contains("http://worker-1:8080/internal/reset", seen);
+        Assert.Contains("http://worker-2:8080/internal/reset", seen);
+    }
+
+    [Fact]
+    public async Task WorkerResetClient_ReturnsFalseWhenAnyShardFails()
+    {
+        var handler = new StubHttpMessageHandler(req =>
+            req.RequestUri!.Host == "worker-1"
+                ? new HttpResponseMessage(System.Net.HttpStatusCode.InternalServerError)
+                : new HttpResponseMessage(System.Net.HttpStatusCode.OK));
+        var client = new HttpClient(handler);
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["WORKER_RESET_URLS"] = "http://worker-0:8080,http://worker-1:8080,http://worker-2:8080"
+            })
+            .Build();
+
+        var resetClient = new WorkerResetClient(new StubHttpClientFactory(client), config, NullLogger<WorkerResetClient>.Instance);
+        var ok = await resetClient.ResetWorkerAsync();
+
+        Assert.False(ok);
+    }
 }

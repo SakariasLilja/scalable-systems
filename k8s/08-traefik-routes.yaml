@@ -7,6 +7,27 @@ spec:
   entryPoints:
     - web
   routes:
+    - match: PathPrefix(`/api/ingest`) && Header(`X-Market-Shard`, `0`)
+      kind: Rule
+      priority: 30
+      services:
+        - kind: Service
+          name: worker-0
+          port: 8080
+    - match: PathPrefix(`/api/ingest`) && Header(`X-Market-Shard`, `1`)
+      kind: Rule
+      priority: 30
+      services:
+        - kind: Service
+          name: worker-1
+          port: 8080
+    - match: PathPrefix(`/api/ingest`) && Header(`X-Market-Shard`, `2`)
+      kind: Rule
+      priority: 30
+      services:
+        - kind: Service
+          name: worker-2
+          port: 8080
     - match: PathPrefix(`/api/ingest`)
       kind: Rule
       priority: 20
