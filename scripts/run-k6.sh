@@ -13,9 +13,12 @@ VUS="${1:-50}"
 DURATION="${2:-60s}"
 BASE_URL="${3:-http://localhost:8080}"
 
-exec k6 run \
+rc=0
+k6 run \
   -e VUS="$VUS" \
   -e DURATION="$DURATION" \
   -e BASE_URL="$BASE_URL" \
   "$REPO_ROOT/loadtests/user-simulation.js" \
-  "${@:4}"
+  "${@:4}" 2> >(grep -vE '/api/sse/stream.*request timeout' >&2 || true) || rc=$?
+wait
+exit "$rc"
