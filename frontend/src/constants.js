@@ -10,7 +10,9 @@ export const subscription_states = {
 export const status_poll_interval_ms = 5000;
 export const alert_dismiss_timeout_ms = 4000;
 export const default_symbol_search_limit = 20;
+export const default_market_symbols_limit = 200;
 export const search_debounce_ms = 150;
+export const search_timeout_ms = 3000;
 export const tracked_symbols_storage_key = 'tick_detector_tracked_symbols';
 
 export const chart_colors = {

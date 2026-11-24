@@ -1,6 +1,8 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import SearchBar from './components/SearchBar.svelte';
+  import MarketBrowser from './components/MarketBrowser.svelte';
+  import InlineChartPanel from './components/InlineChartPanel.svelte';
   import SystemStatusBar from './components/SystemStatusBar.svelte';
   import TrackedList from './components/TrackedList.svelte';
   import ActiveChartModal from './components/ActiveChartModal.svelte';
@@ -42,13 +44,30 @@
   let tracked_symbols = load_initial_tracked_symbols();
   let symbol_data = {};
   let active_modal_symbol = null;
+  let inline_active_symbol = '';
   let latest_active_tick = null;
+  let latest_inline_tick = null;
   let alert_timers = {};
   let is_sse_connected = false;
   let latest_sim_time = null;
   let known_symbol_count = 0;
   let reset_counter = 0;
   let status_timer = null;
+
+  function is_symbol_active(symbol) {
+    return symbol && (symbol === active_modal_symbol || symbol === inline_active_symbol);
+  }
+
+  async function sync_symbol_subscription(symbol) {
+    if (!client_id || !symbol) return;
+    if (is_symbol_active(symbol)) {
+      await set_symbol_state(client_id, symbol, subscription_states.active);
+    } else if (tracked_symbols.includes(symbol)) {
+      await set_symbol_state(client_id, symbol, subscription_states.tracked);
+    } else {
+      await set_symbol_state(client_id, symbol, subscription_states.hidden);
+    }
+  }
 
   async function refresh_system_status() {
     const status = await get_system_status();
@@ -67,7 +86,9 @@
     tracked_symbols = [];
     save_tracked_symbols([]);
     active_modal_symbol = null;
+    inline_active_symbol = '';
     latest_active_tick = null;
+    latest_inline_tick = null;
     latest_sim_time = null;
     known_symbol_count = 0;
     reset_counter += 1;
@@ -76,12 +97,76 @@
   async function re_register_subscriptions() {
     if (!client_id) return;
     for (const sym of tracked_symbols) {
-      if (sym === active_modal_symbol) {
-        await set_symbol_state(client_id, sym, subscription_states.active);
-      } else {
-        await set_symbol_state(client_id, sym, subscription_states.tracked);
-      }
+      await sync_symbol_subscription(sym);
     }
+    if (active_modal_symbol && !tracked_symbols.includes(active_modal_symbol)) {
+      await set_symbol_state(client_id, active_modal_symbol, subscription_states.active);
+    }
+  }
+
+  function apply_single_data_event(event_type, payload) {
+    if (event_type === 'advisory_alert') {
+      const { symbol, type, closePrice, ema38, ema100, time } = payload;
+      if (time) latest_sim_time = time;
+      symbol_data[symbol] = {
+        ...(symbol_data[symbol] || {}),
+        price: closePrice,
+        ema38: ema38,
+        ema100: ema100,
+        recent_alert: type
+      };
+
+      if (symbol === active_modal_symbol) {
+        latest_active_tick = payload;
+      }
+      if (symbol === inline_active_symbol) {
+        latest_inline_tick = payload;
+      }
+
+      if (alert_timers[symbol]) {
+        clearTimeout(alert_timers[symbol]);
+      }
+
+      alert_timers[symbol] = setTimeout(() => {
+        if (symbol_data[symbol] && symbol_data[symbol].recent_alert === type) {
+          symbol_data[symbol].recent_alert = null;
+          symbol_data = symbol_data;
+        }
+        delete alert_timers[symbol];
+      }, alert_dismiss_timeout_ms);
+      return true;
+    }
+
+    if (event_type === 'active_update') {
+      const { symbol, closePrice, ema38, ema100, time } = payload;
+      if (time) latest_sim_time = time;
+      symbol_data[symbol] = {
+        ...(symbol_data[symbol] || {}),
+        price: closePrice,
+        ema38: ema38,
+        ema100: ema100
+      };
+
+      if (symbol === active_modal_symbol) {
+        latest_active_tick = payload;
+      }
+      if (symbol === inline_active_symbol) {
+        latest_inline_tick = payload;
+      }
+      return true;
+    }
+
+    if (event_type === 'tracked_update') {
+      const { symbol, price, time } = payload;
+      if (time) latest_sim_time = time;
+      symbol_data[symbol] = {
+        ...(symbol_data[symbol] || {}),
+        price: price
+      };
+      return true;
+    }
+
+    return false;
   }
 
   function handle_sse_event(event_type, payload) {
@@ -106,54 +191,20 @@
       return;
     }
 
-    if (event_type === 'advisory_alert') {
-      const { symbol, type, closePrice, ema38, ema100, time } = payload;
-      if (time) latest_sim_time = time;
-      symbol_data[symbol] = {
-        ...(symbol_data[symbol] || {}),
-        price: closePrice,
-        ema38: ema38,
-        ema100: ema100,
-        recent_alert: type
-      };
-      symbol_data = symbol_data;
-
-      if (symbol === active_modal_symbol) {
-        latest_active_tick = payload;
-      }
-
-      if (alert_timers[symbol]) {
-        clearTimeout(alert_timers[symbol]);
-      }
-
-      alert_timers[symbol] = setTimeout(() => {
-        if (symbol_data[symbol] && symbol_data[symbol].recent_alert === type) {
-          symbol_data[symbol].recent_alert = null;
-          symbol_data = symbol_data;
+    if (event_type === 'batch_update' && Array.isArray(payload)) {
+      let dirty = false;
+      for (const item of payload) {
+        if (item && apply_single_data_event(item.eventType, item.payload)) {
+          dirty = true;
         }
-        delete alert_timers[symbol];
-      }, alert_dismiss_timeout_ms);
-    } else if (event_type === 'active_update') {
-      const { symbol, closePrice, ema38, ema100, time } = payload;
-      if (time) latest_sim_time = time;
-      symbol_data[symbol] = {
-        ...(symbol_data[symbol] || {}),
-        price: closePrice,
-        ema38: ema38,
-        ema100: ema100
-      };
-      symbol_data = symbol_data;
-
-      if (symbol === active_modal_symbol) {
-        latest_active_tick = payload;
       }
-    } else if (event_type === 'tracked_update') {
-      const { symbol, price, time } = payload;
-      if (time) latest_sim_time = time;
-      symbol_data[symbol] = {
-        ...(symbol_data[symbol] || {}),
-        price: price
-      };
+      if (dirty) {
+        symbol_data = symbol_data;
+      }
+      return;
+    }
+
+    if (apply_single_data_event(event_type, payload)) {
       symbol_data = symbol_data;
     }
   }
@@ -163,23 +214,31 @@
     if (!tracked_symbols.includes(symbol)) {
       tracked_symbols = [...tracked_symbols, symbol];
       save_tracked_symbols(tracked_symbols);
-      await set_symbol_state(client_id, symbol, subscription_states.tracked);
+      await sync_symbol_subscription(symbol);
     }
   }
 
   async function handle_untrack_symbol(event) {
     const symbol = event.detail.symbol;
-    tracked_symbols = tracked_symbols.filter(s => s !== symbol);
+    tracked_symbols = tracked_symbols.filter((s) => s !== symbol);
     save_tracked_symbols(tracked_symbols);
-    await set_symbol_state(client_id, symbol, subscription_states.hidden);
+    if (inline_active_symbol === symbol) {
+      inline_active_symbol = '';
+      latest_inline_tick = null;
+    }
+    await sync_symbol_subscription(symbol);
     delete symbol_data[symbol];
     symbol_data = symbol_data;
   }
 
   async function handle_open_active(event) {
     const symbol = event.detail.symbol;
+    const prev_symbol = active_modal_symbol;
     active_modal_symbol = symbol;
-    await set_symbol_state(client_id, symbol, subscription_states.active);
+    if (prev_symbol && prev_symbol !== symbol) {
+      await sync_symbol_subscription(prev_symbol);
+    }
+    await sync_symbol_subscription(symbol);
   }
 
   async function handle_close_modal() {
@@ -187,11 +246,20 @@
       const prev_symbol = active_modal_symbol;
       active_modal_symbol = null;
       latest_active_tick = null;
-      if (tracked_symbols.includes(prev_symbol)) {
-        await set_symbol_state(client_id, prev_symbol, subscription_states.tracked);
-      } else {
-        await set_symbol_state(client_id, prev_symbol, subscription_states.hidden);
-      }
+      await sync_symbol_subscription(prev_symbol);
+    }
+  }
+
+  async function handle_select_inline(event) {
+    const next_symbol = event.detail.symbol || '';
+    const prev_symbol = inline_active_symbol;
+    inline_active_symbol = next_symbol;
+    latest_inline_tick = null;
+    if (prev_symbol && prev_symbol !== next_symbol) {
+      await sync_symbol_subscription(prev_symbol);
+    }
+    if (next_symbol) {
+      await sync_symbol_subscription(next_symbol);
     }
   }
 
@@ -229,6 +297,19 @@
       on:db_cleared={reset_client_state}
     />
     <SearchBar {reset_counter} on:add_symbol={handle_add_symbol} />
+    <MarketBrowser
+      {tracked_symbols}
+      {known_symbol_count}
+      {reset_counter}
+      on:add_symbol={handle_add_symbol}
+      on:untrack_symbol={handle_untrack_symbol}
+    />
+    <InlineChartPanel
+      {tracked_symbols}
+      selected_symbol={inline_active_symbol}
+      latest_tick={latest_inline_tick}
+      on:select_inline={handle_select_inline}
+    />
     <TrackedList
       {tracked_symbols}
       {symbol_data}

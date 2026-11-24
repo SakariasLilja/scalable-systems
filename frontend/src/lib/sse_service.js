@@ -1,7 +1,9 @@
 import {
   api_base_url,
   sse_stream_url,
-  default_symbol_search_limit
+  default_symbol_search_limit,
+  default_market_symbols_limit,
+  search_timeout_ms
 } from '../constants.js';
 
 export function get_or_create_client_id() {
@@ -21,6 +23,11 @@ export function connect_sse(client_id, on_event) {
   event_source.addEventListener('connected', (e) => {
     const data = JSON.parse(e.data);
     on_event('connected', data);
+  });
+
+  event_source.addEventListener('batch_update', (e) => {
+    const data = JSON.parse(e.data);
+    on_event('batch_update', data);
   });
 
   event_source.addEventListener('advisory_alert', (e) => {
@@ -79,13 +86,57 @@ export async function fetch_history(symbol, limit = 50) {
   return response.json();
 }
 
-export async function search_symbols(query = '', limit = default_symbol_search_limit) {
+export async function search_symbols(query = '', limit = default_symbol_search_limit, external_signal = null) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), search_timeout_ms);
+  const on_external_abort = () => controller.abort();
+  if (external_signal) {
+    if (external_signal.aborted) {
+      clearTimeout(timer);
+      return null;
+    }
+    external_signal.addEventListener('abort', on_external_abort, { once: true });
+  }
+
   try {
-    const response = await fetch(`${api_base_url}/api/symbols/search?q=${encodeURIComponent(query)}&limit=${limit}`);
+    const response = await fetch(
+      `${api_base_url}/api/symbols/search?q=${encodeURIComponent(query)}&limit=${limit}`,
+      { signal: controller.signal }
+    );
     if (!response.ok) return [];
     return await response.json();
   } catch (err) {
-    console.error('Failed to search symbols:', err);
+    if (err && err.name === 'AbortError') {
+      return null;
+    }
+    return [];
+  } finally {
+    clearTimeout(timer);
+    if (external_signal) {
+      external_signal.removeEventListener('abort', on_external_abort);
+    }
+  }
+}
+
+export async function get_markets() {
+  try {
+    const response = await fetch(`${api_base_url}/api/symbols/markets`);
+    if (!response.ok) return [];
+    return await response.json();
+  } catch {
+    return [];
+  }
+}
+
+export async function get_symbols_by_market(market, query = '', limit = default_market_symbols_limit) {
+  if (!market) return [];
+  try {
+    const response = await fetch(
+      `${api_base_url}/api/symbols/by-market/${encodeURIComponent(market)}?q=${encodeURIComponent(query)}&limit=${limit}`
+    );
+    if (!response.ok) return [];
+    return await response.json();
+  } catch {
     return [];
   }
 }

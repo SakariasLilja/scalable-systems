@@ -14,12 +14,21 @@
   let debounce_timer = null;
   let container_ref = null;
   let search_seq = 0;
+  let active_controller = null;
+
+  function abort_pending_search() {
+    if (active_controller) {
+      active_controller.abort();
+      active_controller = null;
+    }
+  }
 
   $: if (reset_counter > 0) {
     if (debounce_timer) {
       clearTimeout(debounce_timer);
       debounce_timer = null;
     }
+    abort_pending_search();
     search_seq += 1;
     search_input = '';
     suggestions = [];
@@ -28,10 +37,16 @@
   }
 
   async function fetch_suggestions(query) {
+    abort_pending_search();
+    const controller = new AbortController();
+    active_controller = controller;
     const seq = ++search_seq;
-    const results = await search_symbols(query, default_symbol_search_limit);
-    if (seq === search_seq && is_open) {
-      suggestions = results || [];
+    const results = await search_symbols(query, default_symbol_search_limit, controller.signal);
+    if (active_controller === controller) {
+      active_controller = null;
+    }
+    if (results !== null && seq === search_seq && is_open) {
+      suggestions = results;
     }
   }
 
@@ -109,6 +124,7 @@
   onDestroy(() => {
     document.removeEventListener('click', handle_document_click);
     if (debounce_timer) clearTimeout(debounce_timer);
+    abort_pending_search();
   });
 </script>
 
