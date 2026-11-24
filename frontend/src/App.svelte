@@ -340,9 +340,9 @@
       if (symbol_data[sym]) {
         symbol_data[sym] = { ...symbol_data[sym], recent_alert: null };
       }
-      await sync_symbol_subscription(sym);
     }
     symbol_data = symbol_data;
+    await Promise.all(symbols.map((sym) => sync_symbol_subscription(sym)));
   }
 
   function handle_toggle_follow_market(event) {
