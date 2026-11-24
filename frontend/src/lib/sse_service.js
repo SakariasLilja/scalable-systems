@@ -91,9 +91,13 @@ export async function fetch_history(symbol, limit = 50, before = null) {
   if (before) {
     url += `&before=${encodeURIComponent(before)}`;
   }
-  const response = await fetch(url);
-  if (!response.ok) return [];
-  return response.json();
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return [];
+    return await response.json();
+  } catch {
+    return [];
+  }
 }
 
 export async function fetch_advisories(limit = advisory_history_limit) {

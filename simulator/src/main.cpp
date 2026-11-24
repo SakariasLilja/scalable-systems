@@ -403,6 +403,7 @@ int run_stream_mode(const CliOptions& opts,
         stats.sim_elapsed_ms.store(completed_days_sim_ms, std::memory_order_relaxed);
     }
 
+    bool flush_error = false;
     if (g_stop_requested.load(std::memory_order_relaxed)) {
         pool.stop_and_join();
     } else {
@@ -419,7 +420,11 @@ int run_stream_mode(const CliOptions& opts,
         int shards = std::max(1, opts.worker_shards);
         for (int s = 0; s < shards; ++s) {
             std::optional<int> shard_hdr = (shards > 1) ? std::optional<int>(s) : std::nullopt;
-            flush_sender.post_json("{}", shard_hdr);
+            sim::HttpPostResult res = flush_sender.post_json("{}", shard_hdr);
+            if (!res.ok) {
+                std::cerr << "Failed to flush worker shard " << s << " (status=" << res.status_code << ")\n";
+                flush_error = true;
+            }
         }
     }
 
@@ -454,7 +459,7 @@ int run_stream_mode(const CliOptions& opts,
               << " speedup=" << std::setprecision(2) << speedup << "x"
               << " min_speedup=" << std::setprecision(2) << reported_min_speedup << "x\n";
 
-    return (read_error || errors > 0) ? 1 : 0;
+    return (read_error || errors > 0 || flush_error) ? 1 : 0;
 }
 
 int run_probe_mode(const CliOptions& opts,

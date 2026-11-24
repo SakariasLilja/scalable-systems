@@ -22,7 +22,9 @@ public class TickIngestionService(
     ILogger<TickIngestionService> logger
 ) : BackgroundService, ITickIngestionService
 {
-    private readonly Channel<MinimalTradingEntry> channel = Channel.CreateBounded<MinimalTradingEntry>(
+    private readonly record struct IngestWorkItem(MinimalTradingEntry? Tick, TaskCompletionSource<int>? FlushTcs);
+
+    private readonly Channel<IngestWorkItem> channel = Channel.CreateBounded<IngestWorkItem>(
         new BoundedChannelOptions(Constants.IngestChannelCapacity)
         {
             FullMode = BoundedChannelFullMode.Wait,
@@ -37,35 +39,15 @@ public class TickIngestionService(
 
     public async ValueTask EnqueueAsync(MinimalTradingEntry tick, CancellationToken ct = default)
     {
-        await channel.Writer.WriteAsync(tick, ct);
+        await channel.Writer.WriteAsync(new IngestWorkItem(tick, null), ct);
         Interlocked.Increment(ref ingestedCount);
     }
 
     public async Task<int> FlushAsync(CancellationToken ct = default)
     {
-        IReadOnlyList<FinalizedWindowRecord> flushed;
-        CancellationToken publishResetToken;
-        lock (processLock)
-        {
-            flushed = windowProcessor.FlushAll();
-            foreach (var record in flushed)
-            {
-                dbBatchWriter.Enqueue(record);
-            }
-            publishResetToken = resetCts.Token;
-        }
-
-        if (flushed.Count > 0)
-        {
-            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, publishResetToken);
-            foreach (var record in flushed)
-            {
-                await windowPublisher.PublishWindowAsync(record, linkedCts.Token);
-            }
-        }
-
-        logger.LogInformation("Flushed {Count} open windows at end of stream", flushed.Count);
-        return flushed.Count;
+        var tcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await channel.Writer.WriteAsync(new IngestWorkItem(null, tcs), ct);
+        return await tcs.Task.WaitAsync(ct);
     }
 
     public void Reset()
@@ -73,8 +55,9 @@ public class TickIngestionService(
         CancellationTokenSource oldCts;
         lock (processLock)
         {
-            while (channel.Reader.TryRead(out _))
+            while (channel.Reader.TryRead(out var item))
             {
+                item.FlushTcs?.TrySetResult(0);
             }
 
             windowProcessor.Reset();
@@ -91,8 +74,47 @@ public class TickIngestionService(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await foreach (var tick in channel.Reader.ReadAllAsync(stoppingToken))
+        await foreach (var item in channel.Reader.ReadAllAsync(stoppingToken))
         {
+            if (item.FlushTcs is not null)
+            {
+                try
+                {
+                    IReadOnlyList<FinalizedWindowRecord> flushed;
+                    CancellationToken publishResetToken;
+                    lock (processLock)
+                    {
+                        flushed = windowProcessor.FlushAll();
+                        foreach (var record in flushed)
+                        {
+                            dbBatchWriter.Enqueue(record);
+                        }
+                        publishResetToken = resetCts.Token;
+                    }
+
+                    if (flushed.Count > 0)
+                    {
+                        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, publishResetToken);
+                        await Task.WhenAll(flushed.Select(r => windowPublisher.PublishWindowAsync(r, linkedCts.Token)));
+                    }
+
+                    logger.LogInformation("Flushed {Count} open windows at end of stream", flushed.Count);
+                    item.FlushTcs.TrySetResult(flushed.Count);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    item.FlushTcs.TrySetCanceled(stoppingToken);
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Unexpected error flushing open windows");
+                    item.FlushTcs.TrySetException(ex);
+                }
+                continue;
+            }
+
+            var tick = item.Tick!;
             try
             {
                 FinalizedWindowRecord? finalized;

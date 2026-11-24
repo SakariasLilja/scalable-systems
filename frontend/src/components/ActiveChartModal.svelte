@@ -22,11 +22,13 @@
   let view_end = 0;
   let is_following_live = true;
   let last_appended_key = '';
+  let latest_point_time_ms = 0;
 
   function normalize_history_item(item) {
     return {
       key: `${item.windowEnd}|${item.lastPrice}`,
       window_start: item.windowStart,
+      time_ms: new Date(item.windowEnd || item.windowStart || 0).getTime(),
       label: format_eu_time(item.windowStart),
       ema38: item.ema38,
       ema100: item.ema100,
@@ -53,43 +55,48 @@
     if (!oldest || !oldest.window_start) return;
 
     is_fetching_older = true;
-    const older = await fetch_history(active_symbol, modal_history_limit, oldest.window_start);
-    is_fetching_older = false;
+    try {
+      const older = await fetch_history(active_symbol, modal_history_limit, oldest.window_start);
+      if (!Array.isArray(older) || older.length === 0) {
+        has_more_history = false;
+        return;
+      }
 
-    if (!Array.isArray(older) || older.length === 0) {
-      has_more_history = false;
-      return;
-    }
+      if (older.length < modal_history_limit) {
+        has_more_history = false;
+      }
 
-    if (older.length < modal_history_limit) {
-      has_more_history = false;
-    }
+      const existing_keys = new Set(all_points.map((p) => p.key));
+      const prepended = older
+        .map(normalize_history_item)
+        .filter((p) => !existing_keys.has(p.key));
 
-    const existing_keys = new Set(all_points.map((p) => p.key));
-    const prepended = older
-      .map(normalize_history_item)
-      .filter((p) => !existing_keys.has(p.key));
-
-    if (prepended.length > 0) {
-      all_points = [...prepended, ...all_points];
-      view_end += prepended.length;
-      render_viewport();
-    } else {
-      has_more_history = false;
+      if (prepended.length > 0) {
+        all_points = [...prepended, ...all_points];
+        view_end += prepended.length;
+      } else {
+        has_more_history = false;
+      }
+    } finally {
+      is_fetching_older = false;
     }
   }
 
   async function pan_viewport(delta) {
     if (all_points.length === 0) return;
+    if (delta < 0 && view_end + delta < Math.min(all_points.length, modal_history_limit) && has_more_history) {
+      await load_older_history();
+    }
+
     const min_end = Math.min(all_points.length, modal_history_limit);
     const max_end = all_points.length;
-    const next_end = Math.max(min_end, Math.min(max_end, view_end + delta));
-    view_end = next_end;
+    view_end = Math.max(min_end, Math.min(max_end, view_end + delta));
     is_following_live = view_end >= all_points.length;
     render_viewport();
 
     if (delta < 0 && view_end - modal_history_limit <= 5 && has_more_history) {
       await load_older_history();
+      render_viewport();
     }
   }
 
@@ -105,82 +112,86 @@
 
   async function initialize_chart() {
     is_loading = true;
-    const history = await fetch_history(active_symbol, modal_history_limit);
-    all_points = Array.isArray(history) ? history.map(normalize_history_item) : [];
-    has_more_history = all_points.length >= modal_history_limit;
-    view_end = all_points.length;
-    is_following_live = true;
+    try {
+      const history = await fetch_history(active_symbol, modal_history_limit);
+      all_points = Array.isArray(history) ? history.map(normalize_history_item) : [];
+      has_more_history = all_points.length >= modal_history_limit;
+      view_end = all_points.length;
+      is_following_live = true;
 
-    if (all_points.length > 0) {
-      last_appended_key = all_points[all_points.length - 1].key;
-    }
-
-    if (canvas_element) {
-      if (chart_instance) {
-        chart_instance.destroy();
+      if (all_points.length > 0) {
+        const tail = all_points[all_points.length - 1];
+        last_appended_key = tail.key;
+        latest_point_time_ms = tail.time_ms || 0;
       }
 
-      chart_instance = new Chart(canvas_element, {
-        type: 'line',
-        data: {
-          labels: [],
-          datasets: [
-            {
-              label: 'EMA (38)',
-              data: [],
-              borderColor: chart_colors.ema_38,
-              backgroundColor: chart_colors.ema_38,
-              borderWidth: 2,
-              tension: 0.2,
-              pointRadius: 2
-            },
-            {
-              label: 'EMA (100)',
-              data: [],
-              borderColor: chart_colors.ema_100,
-              backgroundColor: chart_colors.ema_100,
-              borderWidth: 2,
-              tension: 0.2,
-              pointRadius: 2
-            },
-            {
-              label: 'Close Price',
-              data: [],
-              borderColor: chart_colors.price,
-              backgroundColor: chart_colors.price,
-              borderWidth: 1.5,
-              borderDash: [4, 4],
-              tension: 0.1,
-              pointRadius: 2
-            }
-          ]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          animation: false,
-          scales: {
-            x: {
-              grid: { color: '#334155' },
-              ticks: { color: '#94a3b8' }
-            },
-            y: {
-              grid: { color: '#334155' },
-              ticks: { color: '#94a3b8' }
-            }
+      if (canvas_element) {
+        if (chart_instance) {
+          chart_instance.destroy();
+        }
+
+        chart_instance = new Chart(canvas_element, {
+          type: 'line',
+          data: {
+            labels: [],
+            datasets: [
+              {
+                label: 'EMA (38)',
+                data: [],
+                borderColor: chart_colors.ema_38,
+                backgroundColor: chart_colors.ema_38,
+                borderWidth: 2,
+                tension: 0.2,
+                pointRadius: 2
+              },
+              {
+                label: 'EMA (100)',
+                data: [],
+                borderColor: chart_colors.ema_100,
+                backgroundColor: chart_colors.ema_100,
+                borderWidth: 2,
+                tension: 0.2,
+                pointRadius: 2
+              },
+              {
+                label: 'Close Price',
+                data: [],
+                borderColor: chart_colors.price,
+                backgroundColor: chart_colors.price,
+                borderWidth: 1.5,
+                borderDash: [4, 4],
+                tension: 0.1,
+                pointRadius: 2
+              }
+            ]
           },
-          plugins: {
-            legend: {
-              labels: { color: '#f8fafc' }
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            scales: {
+              x: {
+                grid: { color: '#334155' },
+                ticks: { color: '#94a3b8' }
+              },
+              y: {
+                grid: { color: '#334155' },
+                ticks: { color: '#94a3b8' }
+              }
+            },
+            plugins: {
+              legend: {
+                labels: { color: '#f8fafc' }
+              }
             }
           }
-        }
-      });
+        });
 
-      render_viewport();
+        render_viewport();
+      }
+    } finally {
+      is_loading = false;
     }
-
-    is_loading = false;
   }
 
   $: if (latest_tick && latest_tick.symbol === active_symbol && chart_instance) {
@@ -194,17 +205,21 @@
     if (!chart_instance) return;
     const close_price = tick.closePrice ?? tick.price;
     if (close_price === undefined || close_price === null) return;
+    const tick_date = tick.time ? new Date(tick.time) : new Date();
+    const tick_ms = tick_date.getTime();
+    if (latest_point_time_ms > 0 && tick_ms <= latest_point_time_ms) return;
     const key = `${tick.time || ''}|${close_price}`;
     if (key === last_appended_key) return;
     last_appended_key = key;
+    latest_point_time_ms = tick_ms;
 
-    const tick_date = tick.time ? new Date(tick.time) : new Date();
     all_points = [
       ...all_points,
       {
         key,
         window_start: tick.time || tick_date.toISOString(),
-        label: format_eu_time(tick_date, true),
+        time_ms: tick_ms,
+        label: format_eu_time(tick_date),
         ema38: tick.ema38 ?? close_price,
         ema100: tick.ema100 ?? close_price,
         price: close_price
