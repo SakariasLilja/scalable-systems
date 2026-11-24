@@ -1,5 +1,6 @@
 <script>
   import { createEventDispatcher } from 'svelte';
+  import '../styles/status_bar.css';
   import { clear_database } from '../lib/sse_service.js';
   import { format_eu_datetime } from '../lib/date_format.js';
 
@@ -67,102 +68,3 @@
     {/if}
   </div>
 </div>
-
-<style>
-  .error-banner {
-    background-color: #7f1d1d;
-    border: 1px solid #ef4444;
-    color: #fecaca;
-    padding: 0.75rem 1rem;
-    border-radius: 6px;
-    margin-bottom: 1rem;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 0.875rem;
-  }
-  .error-text {
-    font-weight: 500;
-  }
-  .dismiss-btn {
-    background: transparent;
-    border: none;
-    color: #fecaca;
-    font-size: 1.1rem;
-    cursor: pointer;
-    padding: 0 0.25rem;
-    line-height: 1;
-  }
-  .status-card {
-    background-color: #1e293b;
-    border: 1px solid #334155;
-    border-radius: 8px;
-    padding: 1rem 1.25rem;
-    margin-bottom: 1.5rem;
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: space-between;
-    align-items: center;
-    gap: 1rem;
-  }
-  .status-info {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 1.5rem;
-    font-size: 0.9rem;
-    color: #94a3b8;
-    align-items: center;
-  }
-  .status-info strong {
-    color: #f8fafc;
-  }
-  .connection-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.45rem;
-  }
-  .status-dot {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    background-color: #ef4444;
-    display: inline-block;
-  }
-  .status-dot.connected {
-    background-color: #10b981;
-  }
-  .admin-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-  .confirm-prompt {
-    font-size: 0.85rem;
-    color: #fca5a5;
-    font-weight: 500;
-  }
-  .btn {
-    padding: 0.45rem 0.9rem;
-    border-radius: 4px;
-    border: none;
-    font-size: 0.85rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: opacity 0.2s;
-  }
-  .btn:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-  .btn:hover:not(:disabled) {
-    opacity: 0.9;
-  }
-  .btn-danger {
-    background-color: #dc2626;
-    color: white;
-  }
-  .btn-secondary {
-    background-color: #334155;
-    color: #f8fafc;
-  }
-</style>

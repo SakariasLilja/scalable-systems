@@ -1,5 +1,6 @@
 <script>
   import { onMount, onDestroy, createEventDispatcher } from 'svelte';
+  import '../styles/modals.css';
   import { Chart, registerables } from 'chart.js';
   import { fetch_history } from '../lib/sse_service.js';
   import { format_eu_time } from '../lib/date_format.js';
@@ -144,7 +145,7 @@
 <svelte:window on:keydown={(e) => e.key === 'Escape' && handle_close()} />
 
 <div class="modal-backdrop" role="presentation" on:click|self={handle_close}>
-  <div class="modal-content">
+  <div class="modal-content chart-modal">
     <div class="modal-header">
       <div class="modal-title-row">
         <h2>Real-Time Technical Indicators: {active_symbol}</h2>
@@ -176,109 +177,3 @@
     </div>
   </div>
 </div>
-
-<style>
-  .modal-backdrop {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
-    background-color: rgba(15, 23, 42, 0.85);
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    z-index: 1000;
-  }
-  .modal-content {
-    background-color: #0f172a;
-    border: 1px solid #334155;
-    border-radius: 12px;
-    width: 90%;
-    max-width: 950px;
-    height: 600px;
-    display: flex;
-    flex-direction: column;
-    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-    padding: 1.5rem;
-  }
-  .modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    border-bottom: 1px solid #1e293b;
-    padding-bottom: 0.75rem;
-    margin-bottom: 1rem;
-  }
-  .modal-header h2 {
-    margin: 0;
-    color: #f8fafc;
-    font-size: 1.3rem;
-  }
-  .modal-title-row {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-  }
-  .advisory-btn {
-    padding: 0.3rem 0.8rem;
-    border-radius: 4px;
-    border: none;
-    font-size: 0.82rem;
-    font-weight: 800;
-    letter-spacing: 0.05em;
-    cursor: pointer;
-  }
-  .btn-buy {
-    background-color: #22c55e;
-    color: #052e16;
-  }
-  .btn-sell {
-    background-color: #3b82f6;
-    color: #082f49;
-  }
-  .close-btn {
-    background: none;
-    border: none;
-    font-size: 1.75rem;
-    color: #94a3b8;
-    cursor: pointer;
-  }
-  .close-btn:hover {
-    color: #f8fafc;
-  }
-  .chart-container {
-    flex: 1;
-    position: relative;
-    width: 100%;
-    height: 100%;
-  }
-  .loading-spinner {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    color: #94a3b8;
-  }
-  .modal-footer {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    border-top: 1px solid #1e293b;
-    padding-top: 0.75rem;
-    margin-top: 1rem;
-  }
-  .legend-hint {
-    font-size: 0.85rem;
-    color: #64748b;
-  }
-  .action-btn {
-    padding: 0.4rem 1.2rem;
-    background-color: #334155;
-    color: #f8fafc;
-    border: none;
-    border-radius: 4px;
-    font-weight: 600;
-    cursor: pointer;
-  }
-</style>

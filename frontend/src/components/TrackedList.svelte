@@ -1,4 +1,5 @@
 <script>
+  import '../styles/stock_card.css';
   import StockCard from './StockCard.svelte';
 
   export let tracked_symbols = [];
@@ -24,19 +25,3 @@
     {/each}
   {/if}
 </div>
-
-<style>
-  .cards-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-    gap: 1.25rem;
-  }
-  .empty-state {
-    grid-column: 1 / -1;
-    text-align: center;
-    padding: 3rem;
-    color: #64748b;
-    border: 1px dashed #334155;
-    border-radius: 8px;
-  }
-</style>

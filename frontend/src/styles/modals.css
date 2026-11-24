@@ -1,0 +1,145 @@
+.chart-modal {
+  max-width: 950px;
+  height: 600px;
+  padding: 1.5rem;
+}
+
+.chart-modal .modal-header {
+  margin-bottom: 1rem;
+}
+
+.chart-modal .modal-header h2 {
+  font-size: 1.3rem;
+}
+
+.modal-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.chart-modal .advisory-btn {
+  padding: 0.3rem 0.8rem;
+  font-size: 0.82rem;
+}
+
+.chart-container {
+  flex: 1;
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.loading-spinner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #94a3b8;
+}
+
+.chart-modal .modal-footer {
+  margin-top: 1rem;
+}
+
+.legend-hint {
+  font-size: 0.85rem;
+  color: #64748b;
+}
+
+.history-modal {
+  max-width: 760px;
+  max-height: 80vh;
+  padding: 1.25rem;
+}
+
+.history-modal .modal-header {
+  margin-bottom: 0.75rem;
+}
+
+.history-modal .modal-header h2 {
+  font-size: 1.2rem;
+}
+
+.log-body {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.empty-msg {
+  text-align: center;
+  padding: 2rem;
+  color: #64748b;
+}
+
+.log-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.log-table th,
+.log-table td {
+  text-align: left;
+  padding: 0.55rem 0.65rem;
+  border-bottom: 1px solid #1e293b;
+}
+
+.log-table th {
+  color: #94a3b8;
+  font-weight: 600;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+.sym-cell {
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.time-cell {
+  color: #cbd5e1;
+  font-variant-numeric: tabular-nums;
+}
+
+.type-badge {
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.history-modal .track-btn {
+  padding: 0.3rem 0.65rem;
+  border-radius: 4px;
+  border: none;
+  background-color: #0f766e;
+  color: #f0fdfa;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.history-modal .track-btn.is-tracked {
+  background-color: #1e3a5f;
+  color: #93c5fd;
+}
+
+.history-modal .modal-footer {
+  margin-top: 0.75rem;
+}
+
+.footer-hint {
+  font-size: 0.82rem;
+  color: #64748b;
+}
+
+.modal-footer .action-btn {
+  padding: 0.4rem 1.2rem;
+  background-color: #334155;
+  color: #f8fafc;
+  border: none;
+  border-radius: 4px;
+  font-weight: 600;
+  cursor: pointer;
+}
