@@ -36,4 +36,9 @@ public static class Constants
     public const int DefaultAdvisoriesLimit = 100;
     public const int MaxAdvisoriesLimit = 500;
     public const int SseBatchIntervalMs = 200;
+
+    public const int ConsistentHashVirtualNodes = 128;
+    public const int DefaultRedisCacheTtlSeconds = 120;
+    public const string RedisDbCacheVersionKey = "dbcache:ver";
+    public const string RedisDbCachePrefix = "dbcache";
 }
