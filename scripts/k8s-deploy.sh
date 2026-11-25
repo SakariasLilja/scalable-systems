@@ -37,8 +37,9 @@ if [[ -f "$REPO_ROOT/.env" ]]; then
     --dry-run=client -o yaml | kubectl apply -f -
 fi
 
-echo "Applying TimescaleDB, Redis, Worker StatefulSet, Server, HPA, Traefik, and Routes..."
+echo "Applying TimescaleDB StatefulSet, Redis, Worker StatefulSet, Server, HPA, Traefik, and Routes..."
 kubectl delete deployment worker -n trading-system --ignore-not-found
+kubectl delete deployment timescaledb -n trading-system --ignore-not-found
 kubectl apply -f "$K8S_DIR/01-timescaledb.yaml"
 kubectl apply -f "$K8S_DIR/02-redis.yaml"
 kubectl apply -f "$K8S_DIR/03-worker.yaml"
@@ -48,7 +49,8 @@ kubectl apply -f "$K8S_DIR/07-traefik-deployment.yaml"
 kubectl apply -f "$K8S_DIR/08-traefik-routes.yaml"
 
 echo "Waiting for workloads to become ready..."
-for deploy in timescaledb redis server traefik; do
+kubectl rollout status statefulset/timescaledb -n trading-system --timeout=180s
+for deploy in redis server traefik; do
   kubectl rollout status "deployment/$deploy" -n trading-system --timeout=180s
 done
 kubectl rollout status statefulset/worker -n trading-system --timeout=180s

@@ -68,16 +68,35 @@ export const options = {
   }
 };
 
+function create_vu_rng(seed) {
+  let state = (seed >>> 0) || 1;
+  return function () {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 function select_symbols(available) {
   const pool = Array.isArray(available) && available.length > 0 ? available : fallback_symbols;
-  const start_idx = (__VU - 1) % pool.length;
-  const active_symbol = pool[start_idx];
-  const tracked = [];
-  const count = Math.min(tracked_symbol_count, Math.max(0, pool.length - 1));
-  for (let i = 1; i <= count; i += 1) {
-    tracked.push(pool[(start_idx + i) % pool.length]);
+  const rng = create_vu_rng(__VU * 2654435761);
+  const picked = [];
+  const used = new Set();
+  const total_needed = Math.min(pool.length, 1 + tracked_symbol_count);
+
+  while (picked.length < total_needed) {
+    const idx = Math.floor(rng() * pool.length);
+    if (!used.has(idx)) {
+      used.add(idx);
+      picked.push(pool[idx]);
+    }
   }
-  return { active_symbol, tracked };
+
+  return {
+    active_symbol: picked[0],
+    tracked: picked.slice(1)
+  };
 }
 
 function is_expected_sse_result(res) {
