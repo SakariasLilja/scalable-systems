@@ -1,7 +1,9 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Npgsql;
+using StackExchange.Redis;
 using Trading.Shared.Models;
 using Trading.Shared.Utils;
 
@@ -22,11 +24,14 @@ public interface IDatabaseQueryService
     DateTime? LatestSimulationTime { get; }
 }
 
-public class DatabaseQueryService(
-    IConfiguration configuration,
-    ILogger<DatabaseQueryService> logger
-) : IDatabaseQueryService
+public class DatabaseQueryService : IDatabaseQueryService
 {
+    private readonly IConfiguration configuration;
+    private readonly ILogger<DatabaseQueryService> logger;
+    private readonly IConnectionMultiplexer? redis;
+    private readonly DbShardRouter shardRouter;
+    private readonly int cacheTtlSeconds;
+
     private readonly ConcurrentDictionary<string, byte> liveSymbols = new(StringComparer.OrdinalIgnoreCase);
     private readonly object timeLock = new();
     private readonly object marketCacheLock = new();
@@ -38,6 +43,19 @@ public class DatabaseQueryService(
     private IReadOnlyList<string> cachedDbMarkets = Array.Empty<string>();
     private DateTime cachedDbMarketsAtUtc = DateTime.MinValue;
     private readonly ConcurrentDictionary<string, (IReadOnlyList<string> Symbols, DateTime CachedAtUtc)> cachedDbMarketSymbols = new(StringComparer.OrdinalIgnoreCase);
+
+    public DatabaseQueryService(
+        IConfiguration configuration,
+        ILogger<DatabaseQueryService> logger,
+        IConnectionMultiplexer? redis = null
+    )
+    {
+        this.configuration = configuration;
+        this.logger = logger;
+        this.redis = redis;
+        shardRouter = BuildShardRouter();
+        cacheTtlSeconds = ParseCacheTtlSeconds();
+    }
 
     public int LiveSymbolCount => liveSymbols.Count;
 
@@ -92,44 +110,66 @@ public class DatabaseQueryService(
     public async Task<IReadOnlyList<AdvisoryRecord>> GetRecentAdvisoriesAsync(int limit, CancellationToken ct = default)
     {
         int effectiveLimit = Math.Clamp(limit <= 0 ? Constants.DefaultAdvisoriesLimit : limit, 1, Constants.MaxAdvisoriesLimit);
-        var records = new List<AdvisoryRecord>();
-
-        try
+        var cacheKey = await BuildCacheKeyAsync($"adv:{effectiveLimit}");
+        var cached = await TryGetCacheAsync<List<AdvisoryRecord>>(cacheKey);
+        if (cached is not null)
         {
-            await using var conn = new NpgsqlConnection(BuildConnectionString());
-            await conn.OpenAsync(ct);
+            return cached;
+        }
 
-            await using var cmd = new NpgsqlCommand(
-                "SELECT symbol_id, buy_signal, sell_signal, last_price, ema_38, ema_100, window_end " +
-                "FROM trading_windows WHERE buy_signal = TRUE OR sell_signal = TRUE " +
-                "ORDER BY window_end DESC LIMIT @lim;", conn);
-
-            cmd.Parameters.AddWithValue("@lim", effectiveLimit);
-
-            await using var reader = await cmd.ExecuteReaderAsync(ct);
-            while (await reader.ReadAsync(ct))
+        var shardTasks = shardRouter.AllConnectionStrings.Select(async connStr =>
+        {
+            var list = new List<AdvisoryRecord>();
+            try
             {
-                bool buy = reader.GetBoolean(1);
-                bool sell = reader.GetBoolean(2);
-                string alertType = buy ? "BUY" : sell ? "SELL" : "NONE";
-                if (alertType == "NONE") continue;
+                await using var conn = new NpgsqlConnection(connStr);
+                await conn.OpenAsync(ct);
 
-                records.Add(new AdvisoryRecord(
-                    reader.GetString(0),
-                    alertType,
-                    reader.GetDouble(3),
-                    reader.GetDouble(4),
-                    reader.GetDouble(5),
-                    reader.GetDateTime(6)
-                ));
+                await using var cmd = new NpgsqlCommand(
+                    "SELECT symbol_id, buy_signal, sell_signal, last_price, ema_38, ema_100, window_end " +
+                    "FROM trading_windows WHERE buy_signal = TRUE OR sell_signal = TRUE " +
+                    "ORDER BY window_end DESC LIMIT @lim;", conn);
+
+                cmd.Parameters.AddWithValue("@lim", effectiveLimit);
+
+                await using var reader = await cmd.ExecuteReaderAsync(ct);
+                while (await reader.ReadAsync(ct))
+                {
+                    bool buy = reader.GetBoolean(1);
+                    bool sell = reader.GetBoolean(2);
+                    string alertType = buy ? "BUY" : sell ? "SELL" : "NONE";
+                    if (alertType == "NONE") continue;
+
+                    list.Add(new AdvisoryRecord(
+                        reader.GetString(0),
+                        alertType,
+                        reader.GetDouble(3),
+                        reader.GetDouble(4),
+                        reader.GetDouble(5),
+                        reader.GetDateTime(6)
+                    ));
+                }
             }
-        }
-        catch (Exception ex)
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Could not fetch recent advisories from TimescaleDB shard");
+            }
+            return list;
+        });
+
+        var results = await Task.WhenAll(shardTasks);
+        var merged = results
+            .SelectMany(x => x)
+            .OrderByDescending(x => x.Time)
+            .Take(effectiveLimit)
+            .ToList();
+
+        if (merged.Count > 0)
         {
-            logger.LogWarning(ex, "Could not fetch recent advisories from TimescaleDB");
+            await TrySetCacheAsync(cacheKey, merged);
         }
 
-        return records;
+        return merged;
     }
 
     public async Task<(int KnownSymbols, DateTime? LatestSimulationTime)> GetStatusSummaryAsync(CancellationToken ct = default)
@@ -149,27 +189,34 @@ public class DatabaseQueryService(
 
         if (!cacheFresh)
         {
-            dbCount = 0;
-            dbLatest = null;
-            try
+            var shardTasks = shardRouter.AllConnectionStrings.Select(async connStr =>
             {
-                await using var conn = new NpgsqlConnection(BuildConnectionString());
-                await conn.OpenAsync(ct);
-
-                await using var cmd = new NpgsqlCommand(
-                    "SELECT COUNT(DISTINCT symbol_id), MAX(window_end) FROM trading_windows;", conn);
-
-                await using var reader = await cmd.ExecuteReaderAsync(ct);
-                if (await reader.ReadAsync(ct))
+                try
                 {
-                    dbCount = reader.IsDBNull(0) ? 0 : (int)reader.GetInt64(0);
-                    dbLatest = reader.IsDBNull(1) ? null : reader.GetDateTime(1);
+                    await using var conn = new NpgsqlConnection(connStr);
+                    await conn.OpenAsync(ct);
+
+                    await using var cmd = new NpgsqlCommand(
+                        "SELECT COUNT(DISTINCT symbol_id), MAX(window_end) FROM trading_windows;", conn);
+
+                    await using var reader = await cmd.ExecuteReaderAsync(ct);
+                    if (await reader.ReadAsync(ct))
+                    {
+                        int c = reader.IsDBNull(0) ? 0 : (int)reader.GetInt64(0);
+                        DateTime? t = reader.IsDBNull(1) ? null : reader.GetDateTime(1);
+                        return (c, t);
+                    }
                 }
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "Could not fetch status summary from TimescaleDB");
-            }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Could not fetch status summary from TimescaleDB shard");
+                }
+                return (0, (DateTime?)null);
+            });
+
+            var results = await Task.WhenAll(shardTasks);
+            dbCount = results.Sum(r => r.Item1);
+            dbLatest = results.Where(r => r.Item2.HasValue).Select(r => r.Item2).DefaultIfEmpty(null).Max();
 
             lock (statusCacheLock)
             {
@@ -210,11 +257,23 @@ public class DatabaseQueryService(
     public async Task<IReadOnlyList<FinalizedWindowRecord>> GetHistoryAsync(string symbol, int limit, DateTime? before = null, CancellationToken ct = default)
     {
         int effectiveLimit = limit <= 0 ? Constants.DefaultHistoryLimit : limit;
+        string? cacheKey = null;
+        if (!before.HasValue)
+        {
+            cacheKey = await BuildCacheKeyAsync($"hist:{symbol.Trim().ToUpperInvariant()}:{effectiveLimit}");
+            var cached = await TryGetCacheAsync<List<FinalizedWindowRecord>>(cacheKey);
+            if (cached is not null)
+            {
+                return cached;
+            }
+        }
+
         var records = new List<FinalizedWindowRecord>();
 
         try
         {
-            await using var conn = new NpgsqlConnection(BuildConnectionString());
+            var connStr = shardRouter.GetConnectionStringForSymbol(symbol);
+            await using var conn = new NpgsqlConnection(connStr);
             await conn.OpenAsync(ct);
 
             string sql = before.HasValue
@@ -253,40 +312,64 @@ public class DatabaseQueryService(
             logger.LogWarning(ex, "Could not fetch historical records for symbol {Symbol}", symbol);
         }
 
+        if (cacheKey is not null && records.Count > 0)
+        {
+            await TrySetCacheAsync(cacheKey, records);
+        }
+
         return records;
     }
 
     public async Task<IReadOnlyList<string>> SearchSymbolsAsync(string? query, int limit, CancellationToken ct = default)
     {
         int effectiveLimit = limit <= 0 ? Constants.DefaultSymbolSearchLimit : limit;
-        var dbSymbols = new List<string>();
         string trimmed = query?.Trim() ?? string.Empty;
 
-        try
+        var cacheKey = await BuildCacheKeyAsync($"search:{trimmed.ToUpperInvariant()}:{effectiveLimit}");
+        var cachedDb = await TryGetCacheAsync<List<string>>(cacheKey);
+        if (cachedDb is not null)
         {
-            await using var conn = new NpgsqlConnection(BuildConnectionString());
-            await conn.OpenAsync(ct);
+            return FilterSymbols(liveSymbols.Keys.Concat(cachedDb), trimmed, effectiveLimit);
+        }
 
-            await using var cmd = new NpgsqlCommand(
-                "SELECT DISTINCT symbol_id FROM trading_windows WHERE (@q = '' OR symbol_id ILIKE @pattern) ORDER BY symbol_id LIMIT @lim;",
-                conn);
-
-            cmd.Parameters.AddWithValue("@q", trimmed);
-            cmd.Parameters.AddWithValue("@pattern", $"%{trimmed}%");
-            cmd.Parameters.AddWithValue("@lim", effectiveLimit);
-
-            await using var reader = await cmd.ExecuteReaderAsync(ct);
-            while (await reader.ReadAsync(ct))
+        var shardTasks = shardRouter.AllConnectionStrings.Select(async connStr =>
+        {
+            var list = new List<string>();
+            try
             {
-                dbSymbols.Add(reader.GetString(0));
+                await using var conn = new NpgsqlConnection(connStr);
+                await conn.OpenAsync(ct);
+
+                await using var cmd = new NpgsqlCommand(
+                    "SELECT DISTINCT symbol_id FROM trading_windows WHERE (@q = '' OR symbol_id ILIKE @pattern) ORDER BY symbol_id LIMIT @lim;",
+                    conn);
+
+                cmd.Parameters.AddWithValue("@q", trimmed);
+                cmd.Parameters.AddWithValue("@pattern", $"%{trimmed}%");
+                cmd.Parameters.AddWithValue("@lim", effectiveLimit);
+
+                await using var reader = await cmd.ExecuteReaderAsync(ct);
+                while (await reader.ReadAsync(ct))
+                {
+                    list.Add(reader.GetString(0));
+                }
             }
-        }
-        catch (Exception ex)
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Could not search symbols in TimescaleDB shard; using live cache");
+            }
+            return list;
+        });
+
+        var dbSymbols = (await Task.WhenAll(shardTasks)).SelectMany(x => x).ToList();
+        if (dbSymbols.Count > 0)
         {
-            logger.LogWarning(ex, "Could not search symbols in TimescaleDB; using live cache");
+            var mergedDb = FilterSymbols(dbSymbols, trimmed, effectiveLimit).ToList();
+            await TrySetCacheAsync(cacheKey, mergedDb);
+            return FilterSymbols(liveSymbols.Keys.Concat(mergedDb), trimmed, effectiveLimit);
         }
 
-        return FilterSymbols(liveSymbols.Keys.Concat(dbSymbols), trimmed, effectiveLimit);
+        return FilterSymbols(liveSymbols.Keys, trimmed, effectiveLimit);
     }
 
     public static string ExtractMarket(string symbolId)
@@ -323,30 +406,56 @@ public class DatabaseQueryService(
 
         if (!cacheFresh)
         {
-            var fetched = new List<string>();
-            try
+            var cacheKey = await BuildCacheKeyAsync("markets");
+            var redisMarkets = await TryGetCacheAsync<List<string>>(cacheKey);
+            List<string> fetched;
+
+            if (redisMarkets is not null)
             {
-                await using var conn = new NpgsqlConnection(BuildConnectionString());
-                await conn.OpenAsync(ct);
-
-                await using var cmd = new NpgsqlCommand(
-                    "SELECT DISTINCT UPPER(SPLIT_PART(symbol_id, '.', ARRAY_LENGTH(STRING_TO_ARRAY(symbol_id, '.'), 1))) AS market " +
-                    "FROM trading_windows WHERE POSITION('.' IN symbol_id) > 0 ORDER BY market;",
-                    conn);
-
-                await using var reader = await cmd.ExecuteReaderAsync(ct);
-                while (await reader.ReadAsync(ct))
-                {
-                    var market = reader.GetString(0);
-                    if (!string.IsNullOrWhiteSpace(market))
-                    {
-                        fetched.Add(market);
-                    }
-                }
+                fetched = redisMarkets;
             }
-            catch (Exception ex)
+            else
             {
-                logger.LogWarning(ex, "Could not fetch markets from TimescaleDB; using live cache");
+                var shardTasks = shardRouter.AllConnectionStrings.Select(async connStr =>
+                {
+                    var list = new List<string>();
+                    try
+                    {
+                        await using var conn = new NpgsqlConnection(connStr);
+                        await conn.OpenAsync(ct);
+
+                        await using var cmd = new NpgsqlCommand(
+                            "SELECT DISTINCT UPPER(SPLIT_PART(symbol_id, '.', ARRAY_LENGTH(STRING_TO_ARRAY(symbol_id, '.'), 1))) AS market " +
+                            "FROM trading_windows WHERE POSITION('.' IN symbol_id) > 0 ORDER BY market;",
+                            conn);
+
+                        await using var reader = await cmd.ExecuteReaderAsync(ct);
+                        while (await reader.ReadAsync(ct))
+                        {
+                            var market = reader.GetString(0);
+                            if (!string.IsNullOrWhiteSpace(market))
+                            {
+                                list.Add(market);
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(ex, "Could not fetch markets from TimescaleDB shard; using live cache");
+                    }
+                    return list;
+                });
+
+                fetched = (await Task.WhenAll(shardTasks))
+                    .SelectMany(x => x)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(m => m, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (fetched.Count > 0)
+                {
+                    await TrySetCacheAsync(cacheKey, fetched);
+                }
             }
 
             lock (marketCacheLock)
@@ -388,36 +497,59 @@ public class DatabaseQueryService(
         }
         else
         {
-            var fetched = new List<string>();
-            try
+            string? cacheKey = string.IsNullOrEmpty(trimmed)
+                ? await BuildCacheKeyAsync($"mkt:{cleanMarket}:{effectiveLimit}")
+                : null;
+            var redisSymbols = cacheKey is not null ? await TryGetCacheAsync<List<string>>(cacheKey) : null;
+            List<string> fetched;
+
+            if (redisSymbols is not null)
             {
-                await using var conn = new NpgsqlConnection(BuildConnectionString());
-                await conn.OpenAsync(ct);
-
-                await using var cmd = new NpgsqlCommand(
-                    "SELECT DISTINCT symbol_id FROM trading_windows " +
-                    "WHERE symbol_id ILIKE @marketPattern ESCAPE '\\' AND (@q = '' OR symbol_id ILIKE @queryPattern ESCAPE '\\') " +
-                    "ORDER BY symbol_id LIMIT @lim;",
-                    conn);
-
-                cmd.Parameters.AddWithValue("@marketPattern", $"%.{EscapeLikePattern(cleanMarket)}");
-                cmd.Parameters.AddWithValue("@q", trimmed);
-                cmd.Parameters.AddWithValue("@queryPattern", $"%{EscapeLikePattern(trimmed)}%");
-                cmd.Parameters.AddWithValue("@lim", effectiveLimit);
-
-                await using var reader = await cmd.ExecuteReaderAsync(ct);
-                while (await reader.ReadAsync(ct))
-                {
-                    var sym = reader.GetString(0);
-                    if (string.Equals(ExtractMarket(sym), cleanMarket, StringComparison.OrdinalIgnoreCase))
-                    {
-                        fetched.Add(sym);
-                    }
-                }
+                fetched = redisSymbols;
             }
-            catch (Exception ex)
+            else
             {
-                logger.LogWarning(ex, "Could not fetch symbols for market {Market} from TimescaleDB; using live cache", cleanMarket);
+                var shardTasks = shardRouter.AllConnectionStrings.Select(async connStr =>
+                {
+                    var list = new List<string>();
+                    try
+                    {
+                        await using var conn = new NpgsqlConnection(connStr);
+                        await conn.OpenAsync(ct);
+
+                        await using var cmd = new NpgsqlCommand(
+                            "SELECT DISTINCT symbol_id FROM trading_windows " +
+                            "WHERE symbol_id ILIKE @marketPattern ESCAPE '\\' AND (@q = '' OR symbol_id ILIKE @queryPattern ESCAPE '\\') " +
+                            "ORDER BY symbol_id LIMIT @lim;",
+                            conn);
+
+                        cmd.Parameters.AddWithValue("@marketPattern", $"%.{EscapeLikePattern(cleanMarket)}");
+                        cmd.Parameters.AddWithValue("@q", trimmed);
+                        cmd.Parameters.AddWithValue("@queryPattern", $"%{EscapeLikePattern(trimmed)}%");
+                        cmd.Parameters.AddWithValue("@lim", effectiveLimit);
+
+                        await using var reader = await cmd.ExecuteReaderAsync(ct);
+                        while (await reader.ReadAsync(ct))
+                        {
+                            var sym = reader.GetString(0);
+                            if (string.Equals(ExtractMarket(sym), cleanMarket, StringComparison.OrdinalIgnoreCase))
+                            {
+                                list.Add(sym);
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(ex, "Could not fetch symbols for market {Market} from TimescaleDB shard; using live cache", cleanMarket);
+                    }
+                    return list;
+                });
+
+                fetched = (await Task.WhenAll(shardTasks)).SelectMany(x => x).ToList();
+                if (cacheKey is not null && fetched.Count > 0)
+                {
+                    await TrySetCacheAsync(cacheKey, FilterSymbols(fetched, string.Empty, effectiveLimit).ToList());
+                }
             }
 
             if (string.IsNullOrEmpty(trimmed))
@@ -435,27 +567,111 @@ public class DatabaseQueryService(
 
     public async Task TruncateTradingWindowsAsync(CancellationToken ct = default)
     {
-        await using var conn = new NpgsqlConnection(BuildConnectionString());
-        await conn.OpenAsync(ct);
+        var tasks = shardRouter.AllConnectionStrings.Select(async connStr =>
+        {
+            await using var conn = new NpgsqlConnection(connStr);
+            await conn.OpenAsync(ct);
 
-        await using var cmd = new NpgsqlCommand("TRUNCATE TABLE trading_windows;", conn);
-        await cmd.ExecuteNonQueryAsync(ct);
+            await using var cmd = new NpgsqlCommand("TRUNCATE TABLE trading_windows;", conn);
+            await cmd.ExecuteNonQueryAsync(ct);
+        });
+
+        await Task.WhenAll(tasks);
+        await BumpCacheVersionAsync();
     }
 
-    private string BuildConnectionString()
+    private DbShardRouter BuildShardRouter()
     {
+        var shardsCsv = Environment.GetEnvironmentVariable("TIMESCALEDB_SHARDS") ?? configuration["TIMESCALEDB_SHARDS"];
         var configured = configuration.GetConnectionString("TimescaleDb");
-        if (!string.IsNullOrWhiteSpace(configured))
-        {
-            return configured;
-        }
-
         var host = Environment.GetEnvironmentVariable("POSTGRES_HOST") ?? configuration["POSTGRES_HOST"] ?? "localhost";
         var port = Environment.GetEnvironmentVariable("POSTGRES_PORT") ?? configuration["POSTGRES_PORT"] ?? "5432";
         var db = Environment.GetEnvironmentVariable("POSTGRES_DB") ?? configuration["POSTGRES_DB"] ?? "trading_db";
         var user = Environment.GetEnvironmentVariable("POSTGRES_USER") ?? configuration["POSTGRES_USER"] ?? "postgres";
         var password = Environment.GetEnvironmentVariable("POSTGRES_PASSWORD") ?? configuration["POSTGRES_PASSWORD"] ?? "postgres_password";
 
-        return $"Host={host};Port={port};Database={db};Username={user};Password={password};Timeout=5;Command Timeout=10";
+        return new DbShardRouter(shardsCsv, configured, host, port, db, user, password);
+    }
+
+    private int ParseCacheTtlSeconds()
+    {
+        var raw = Environment.GetEnvironmentVariable("REDIS_CACHE_TTL_SECONDS") ?? configuration["REDIS_CACHE_TTL_SECONDS"];
+        return int.TryParse(raw, out int parsed) ? parsed : Constants.DefaultRedisCacheTtlSeconds;
+    }
+
+    private async Task<string?> BuildCacheKeyAsync(string suffix)
+    {
+        if (cacheTtlSeconds <= 0 || redis is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var db = redis.GetDatabase();
+            var ver = await db.StringGetAsync(Constants.RedisDbCacheVersionKey);
+            var verStr = ver.HasValue ? ver.ToString() : "0";
+            return $"{Constants.RedisDbCachePrefix}:v{verStr}:{suffix}";
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private async Task<T?> TryGetCacheAsync<T>(string? key) where T : class
+    {
+        if (string.IsNullOrEmpty(key) || cacheTtlSeconds <= 0 || redis is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var raw = await redis.GetDatabase().StringGetAsync(key);
+            if (!raw.HasValue)
+            {
+                return null;
+            }
+
+            return JsonSerializer.Deserialize<T>(raw.ToString());
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private async Task TrySetCacheAsync<T>(string? key, T value)
+    {
+        if (string.IsNullOrEmpty(key) || cacheTtlSeconds <= 0 || redis is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var json = JsonSerializer.Serialize(value);
+            await redis.GetDatabase().StringSetAsync(key, json, TimeSpan.FromSeconds(cacheTtlSeconds));
+        }
+        catch
+        {
+        }
+    }
+
+    private async Task BumpCacheVersionAsync()
+    {
+        if (redis is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await redis.GetDatabase().StringIncrementAsync(Constants.RedisDbCacheVersionKey);
+        }
+        catch
+        {
+        }
     }
 }
