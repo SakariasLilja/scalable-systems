@@ -16,7 +16,7 @@ spec:
         name: cpu
         target:
           type: AverageValue
-          averageValue: 600m
+          averageValue: 300m
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 0
