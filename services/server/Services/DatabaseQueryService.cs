@@ -164,10 +164,7 @@ public class DatabaseQueryService : IDatabaseQueryService
             .Take(effectiveLimit)
             .ToList();
 
-        if (merged.Count > 0)
-        {
-            await TrySetCacheAsync(cacheKey, merged);
-        }
+        await TrySetCacheAsync(cacheKey, merged);
 
         return merged;
     }
@@ -312,7 +309,7 @@ public class DatabaseQueryService : IDatabaseQueryService
             logger.LogWarning(ex, "Could not fetch historical records for symbol {Symbol}", symbol);
         }
 
-        if (cacheKey is not null && records.Count > 0)
+        if (cacheKey is not null)
         {
             await TrySetCacheAsync(cacheKey, records);
         }
@@ -362,14 +359,9 @@ public class DatabaseQueryService : IDatabaseQueryService
         });
 
         var dbSymbols = (await Task.WhenAll(shardTasks)).SelectMany(x => x).ToList();
-        if (dbSymbols.Count > 0)
-        {
-            var mergedDb = FilterSymbols(dbSymbols, trimmed, effectiveLimit).ToList();
-            await TrySetCacheAsync(cacheKey, mergedDb);
-            return FilterSymbols(liveSymbols.Keys.Concat(mergedDb), trimmed, effectiveLimit);
-        }
-
-        return FilterSymbols(liveSymbols.Keys, trimmed, effectiveLimit);
+        var mergedDb = FilterSymbols(dbSymbols, trimmed, effectiveLimit).ToList();
+        await TrySetCacheAsync(cacheKey, mergedDb);
+        return FilterSymbols(liveSymbols.Keys.Concat(mergedDb), trimmed, effectiveLimit);
     }
 
     public static string ExtractMarket(string symbolId)
@@ -452,10 +444,7 @@ public class DatabaseQueryService : IDatabaseQueryService
                     .OrderBy(m => m, StringComparer.OrdinalIgnoreCase)
                     .ToList();
 
-                if (fetched.Count > 0)
-                {
-                    await TrySetCacheAsync(cacheKey, fetched);
-                }
+                await TrySetCacheAsync(cacheKey, fetched);
             }
 
             lock (marketCacheLock)
@@ -546,7 +535,7 @@ public class DatabaseQueryService : IDatabaseQueryService
                 });
 
                 fetched = (await Task.WhenAll(shardTasks)).SelectMany(x => x).ToList();
-                if (cacheKey is not null && fetched.Count > 0)
+                if (cacheKey is not null)
                 {
                     await TrySetCacheAsync(cacheKey, FilterSymbols(fetched, string.Empty, effectiveLimit).ToList());
                 }
