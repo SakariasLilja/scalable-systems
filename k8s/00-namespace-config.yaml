@@ -17,6 +17,8 @@ data:
   POSTGRES_DB: "trading_db"
   TIMESCALEDB_SHARDS: "timescaledb-0.timescaledb:5432,timescaledb-1.timescaledb:5432"
   REDIS_CACHE_TTL_SECONDS: "120"
+  Logging__LogLevel__Default: "Warning"
+  Logging__LogLevel__Microsoft.AspNetCore: "Warning"
   ASPNETCORE_URLS: "http://+:8080"
 ---
 apiVersion: v1
