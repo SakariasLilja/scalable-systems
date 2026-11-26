@@ -60,6 +60,7 @@ function build_stages(vus, total_sec) {
 }
 
 export const options = {
+  discardResponseBodies: true,
   stages: build_stages(target_vus, parse_duration_seconds(total_duration)),
   thresholds: {
     'http_req_failed{type:rest}': [`rate<${rest_error_rate_threshold}`],
@@ -116,7 +117,7 @@ export default function () {
 
   const search_res = http.get(
     `${base_url}/api/symbols/search?q=&limit=${symbol_search_limit}`,
-    { tags: { type: 'rest', endpoint: 'symbols_search' } }
+    { responseType: 'text', tags: { type: 'rest', endpoint: 'symbols_search' } }
   );
 
   let available = fallback_symbols;
