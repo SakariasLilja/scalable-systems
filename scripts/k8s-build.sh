@@ -9,6 +9,7 @@ if ! minikube status --format='{{.Host}}' 2>/dev/null | grep -q "Running"; then
 fi
 
 eval "$(minikube docker-env)"
+export BUILDX_BUILDER=default
 
 echo "Building trading-worker:local inside Minikube Docker..."
 docker build -t trading-worker:local -f "$REPO_ROOT/services/worker/Dockerfile" "$REPO_ROOT"
